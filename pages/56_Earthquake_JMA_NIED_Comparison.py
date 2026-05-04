@@ -4,32 +4,18 @@
 Japan-focused USGS vs JMA/NIED earthquake catalog comparison page.
 """
 
-import importlib.util
-from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
 import envgeo_utils
+import envgeo_earthquake_utils as eq
 
 
 version = "0.1.0"
 
 
-def load_advanced_earthquake_module():
-    """
-    Load helper functions from the advanced earthquake visualizer page.
-    """
-    page_path = Path(__file__).with_name("55_4D_Visualizer_Earthquake_Advanced.py")
-    spec = importlib.util.spec_from_file_location("envgeo_earthquake_advanced", page_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def main():
-    eq = load_advanced_earthquake_module()
-
     st.header("EnvGeo-Earthquake")
     st.header(f"JMA / NIED Comparison ({version})")
     st.caption("USGS query results can be compared with uploaded JMA/NIED catalog tables.")
