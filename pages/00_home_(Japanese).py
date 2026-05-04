@@ -128,9 +128,9 @@ def main():
 
     with tab_main:
         st.header("Start")
-        st.write("サイドバーから以下の地震可視化ページを開いてください。")
+        st.write("サイドバーから地震可視化ページを開いてください。")
 
-        col_basic, col_advanced, col_compare = st.columns(3)
+        col_basic, col_advanced = st.columns(2)
 
         with col_basic:
             st.subheader("4D Visualizer Earthquake")
@@ -145,15 +145,8 @@ def main():
             st.write(
                 "地震データを詳細に探索するための発展版可視化ページです。"
                 "2D マップ、3D/4D 震源プロット、プレート境界表示、"
-                "断面図、深度プロファイル、時系列ヒストグラムを含みます。"
-            )
-
-        with col_compare:
-            st.subheader("JMA / NIED Comparison")
-            st.write(
-                "現在の USGS クエリ結果を、利用者がアップロードした JMA、NIED Hi-net、"
-                "JMA一元化カタログ、または関連する地域カタログ表と比較します。"
-                "このページは JMA/NIED データを自動スクレイピングしません。"
+                "断面図、深度プロファイル、時系列ヒストグラム、"
+                "JMA/NIED カタログ比較機能を含みます。"
             )
 
         st.info("3D 表示は PC での利用を推奨します。スマートフォンやタブレットでは 2D マップの利用を推奨します。")
@@ -165,7 +158,7 @@ def main():
 - 沈み込み帯に沿って震源深さはどのように変化するか？
 - 大きなマグニチュードの地震は、特定の深さ範囲に集中しているか？
 - 選択した期間内で、地震活動は時間的にどのように変化するか？
-- 日本周辺において、USGS の震源位置はアップロードした JMA/NIED カタログ表とどのように異なるか？
+- 日本周辺において、Advancedページ内で、USGS の震源位置はアップロードした JMA/NIED カタログ表とどのように異なるか？
             """
         )
 
@@ -226,7 +219,7 @@ def main():
 
         st.subheader("JMA / NIED 比較")
         st.write(
-            "比較ページは、手動でアップロードした JMA/NIED 表データとの比較を目的としています。"
+            "Advancedページには、手動でアップロードした JMA/NIED 表データとの比較機能があります。"
             "JMA や NIED のサービスを自動的にスクレイピングするものではありません。"
             "これらのカタログをダウンロードまたは再配布する際は、各提供元の利用条件や謝辞要件を確認してください。"
         )
@@ -259,7 +252,7 @@ def main():
 6. 深さ構造や沈み込み帯の形状を確認する場合は、PC で 3D/4D マップを使用します。
 7. `Cross-section / depth` で A-B 断面を定義し、深さ分布と地図上の断面線を確認します。
 8. `Time histogram` で時間的な集中や変化を確認します。
-9. `JMA/NIED comparison` で対応するカタログ表をアップロードし、現在の USGS クエリ結果と比較します。
+9. `4D Visualizer Earthquake Advanced` 内の JMA/NIED 比較機能で、対応するカタログ表をアップロードし、現在の USGS クエリ結果と比較します。
             """
         )
 
