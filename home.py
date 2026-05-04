@@ -87,7 +87,7 @@ def render_external_link(label: str, url: str) -> None:
 
 
 def render_page_link(page_path: str, label: str) -> None:
-    """Show page names as plain text only; do not call # st.page_link()."""
+    """Show page names as plain text only; do not call st.page_link()."""
     st.markdown(f"- `{page_path}` — {label}")
 
 def render_source_links() -> None:
@@ -128,9 +128,9 @@ def main():
 
     with tab_main:
         st.header("Start")
-        st.write("Open one of the earthquake pages from the sidebar or the links below.")
+        st.write("Open one of the earthquake pages from the sidebar.")
 
-        col_basic, col_advanced, col_compare = st.columns(3)
+        col_basic, col_advanced = st.columns(2)
 
         with col_basic:
             st.subheader("4D Visualizer Earthquake")
@@ -140,22 +140,13 @@ def main():
                 "as basic 2D and 3D/4D hypocenter maps."
             )
 
-
         with col_advanced:
             st.subheader("4D Visualizer Earthquake Advanced")
             st.write(
                 "An advanced visualizer for detailed earthquake exploration. "
                 "It includes 2D maps, 3D/4D hypocenter plots, plate-boundary overlays, "
-                "cross-sections, depth profiles, and time histograms."
-            )
-
-
-        with col_compare:
-            st.subheader("JMA / NIED Comparison")
-            st.write(
-                "Compare the current USGS query with a user-uploaded JMA, NIED Hi-net, "
-                "JMA unified catalog, or related local catalog table. "
-                "This page does not scrape JMA/NIED data."
+                "cross-sections, depth profiles, time histograms, and JMA/NIED "
+                "catalog comparison tools."
             )
 
 
@@ -169,7 +160,7 @@ def main():
 - How does hypocenter depth change across a subduction zone?
 - Are larger-magnitude events concentrated in a particular depth range?
 - How does seismicity vary through time within a selected window?
-- How do USGS locations compare with uploaded JMA/NIED catalog tables around Japan?
+- How do USGS locations compare with uploaded JMA/NIED catalog tables around Japan in the Advanced page?
             """
         )
 
@@ -234,7 +225,7 @@ Core concepts:
 
         st.subheader("JMA / NIED comparison")
         st.write(
-            "The comparison page is designed for manually uploaded JMA/NIED tables. "
+            "The Advanced page includes tools for manually uploaded JMA/NIED tables. "
             "It intentionally does not automatically scrape JMA or NIED services. "
             "Use provider guidance and acknowledgement requirements when downloading "
             "or redistributing these catalogs."
@@ -269,7 +260,7 @@ Core concepts:
 6. Use the 3D/4D map on a PC for depth structure and subduction-zone geometry.
 7. Use `Cross-section / depth` to define an A-B section, inspect the depth distribution, and see the section line on the map.
 8. Use `Time histogram` to inspect temporal clustering.
-9. Use `JMA/NIED comparison` to upload a compatible catalog table and compare it with the current USGS query.
+9. In `4D Visualizer Earthquake Advanced`, use the JMA/NIED comparison tools to upload a compatible catalog table and compare it with the current USGS query.
             """
         )
 

@@ -29,7 +29,7 @@ Catalog API and visualizes the result as:
 - arbitrary A-B cross-sections with a section-location map
 - depth-frequency profiles
 - time-series histograms
-- Japan-focused comparison with uploaded JMA/NIED catalog tables
+- Japan-focused comparison with uploaded JMA/NIED catalog tables in the Advanced page
 - plate-boundary overlays from USGS where available
 
 
@@ -45,11 +45,7 @@ The app uses the following Streamlit page files.
 
 - `pages/55_4D_Visualizer_Earthquake_Advanced.py`
   Advanced earthquake visualizer with plate boundaries, 2D/3D maps,
-  cross-section, depth profile, time histogram, and JMA/NIED comparison tab.
-
-- `pages/56_Earthquake_JMA_NIED_Comparison.py`
-  Japan-focused page for comparing the current USGS query with a user-uploaded
-  JMA, NIED Hi-net, JMA unified catalog, or related local catalog table.
+  cross-section, depth profile, time histogram, and JMA/NIED comparison tools.
 
 
 ---
@@ -277,8 +273,8 @@ Recommended workflow:
 7. Use cross-section and depth-profile tools for subduction-zone or regional
    seismicity analysis.
 8. Use the time histogram to examine temporal clustering.
-9. Use the JMA/NIED comparison page with manually uploaded catalog data when
-   comparing Japan-area catalogs.
+9. Use the JMA/NIED comparison tools in the Advanced page with manually uploaded
+   catalog data when comparing Japan-area catalogs.
 
 ---
 
@@ -336,18 +332,11 @@ df.attrs["query_url"]
   Shared low-level utilities, including USGS API loading, GeoJSON normalization,
   mapping styles, coastline loading, and cache clearing.
 
-- `envgeo_earthquake_utils.py`  
-  Earthquake-specific Streamlit controls, plate-boundary overlays, 2D/3D maps,
-  cross-sections, depth profiles, time histograms, and JMA/NIED comparison helpers.
-
 - `pages/54_4D_Visualizer_Earthquake.py`  
   Basic earthquake visualizer.
 
 - `pages/55_4D_Visualizer_Earthquake_Advanced.py`  
-  Advanced earthquake visualizer.
-
-- `pages/56_Earthquake_JMA_NIED_Comparison.py`  
-  Japan-focused catalog comparison page.
+  Advanced earthquake visualizer, including JMA/NIED comparison tools.
 
 - `coastline/`  
   Local coastline coordinate files for 3D reference overlays.
