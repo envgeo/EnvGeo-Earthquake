@@ -78,7 +78,7 @@ refs_GLOBAL = ':blue[Data source:] Kodama et al. (2024), Yamamoto et al. (2001),
                 :blue[Integrated with:] NASA GISS Global Seawater d18O Database (Jan 23, 2025)\
                 :blue[and] CoralHydro2k d18O Database (Atwood et al., 2026; v1.0.0)'
 
-refs_USGS_EARTHQUAKE = ':blue[Data source:] USGS Earthquake Catalog API (GeoJSON, eventtype=earthquake).'
+refs_USGS_EARTHQUAKE = ':gray[Source: USGS Earthquake Catalog]'
 
 
 
@@ -230,6 +230,7 @@ def load_isotope_data(ref_data, sheet_num=0):
 ##############################################################################
 # --- 2. LOAD COASTLINE DATA (Global or Japan) ---
 # Fetch geographic boundaries for mapping based on the selected data source.
+# Coastline data: derived from Natural Earth (public domain).
 ##############################################################################
 """
 @st.cache_data
@@ -546,7 +547,8 @@ def get_custom_colorscale(selected_item):
 def apply_map_style(fig, map_mode):
     """
     Apply the selected background tile layer to the Mapbox figure.
-    All tile sources have been verified for web-use licensing.
+    Keep provider attribution visible and re-check provider terms before using
+    static exports or publication figures.
     """
     
     fig.update_layout(mapbox_style="carto-positron")
