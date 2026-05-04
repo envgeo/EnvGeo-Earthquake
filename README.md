@@ -8,7 +8,7 @@ hypocenters for research and education.
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 This application was created by adapting the spatial 3D/4D visualization workflow
-of **EnvGeo-Seawater** to earthquake catalog data. The original EnvGeo-Seawater
+of **EnvGeo-Seawater** (https://envgeo.h.kyoto-u.ac.jp/sw_jpn/) to earthquake catalog data. The original EnvGeo-Seawater
 project focused on interactive visualization of oceanographic and marine
 geochemical data. EnvGeo-Earthquake keeps the educational, exploratory, and
 source-aware philosophy of that project, but removes the ocean chemistry
