@@ -87,11 +87,8 @@ def render_external_link(label: str, url: str) -> None:
 
 
 def render_page_link(page_path: str, label: str) -> None:
-    if hasattr(st, "page_link"):
-        st.page_link(page_path, label=label)
-    else:
-        st.markdown(f"`{page_path}`: {label}")
-
+    """Show page names as plain text only; do not call # st.page_link()."""
+    st.markdown(f"- `{page_path}` — {label}")
 
 def render_source_links() -> None:
     st.markdown(f"- [USGS Earthquake Catalog API]({URLS['usgs_api']})")
@@ -115,7 +112,7 @@ def main():
     st.write(
         "EnvGeo-Earthquake is a Streamlit app for exploring earthquake hypocenters "
         "by time, location, magnitude, and depth. It was built by adapting the "
-        "EnvGeo-Seawater 3D/4D visualization workflow to earthquake catalog data."
+        "EnvGeo-Seawater 3D/4D visualization workflow(https://envgeo.h.kyoto-u.ac.jp/sw_jpn/) to earthquake catalog data."
     )
     st.write(f"Version: {APP_VERSION}")
     st.caption("Data source: USGS Earthquake Catalog API (GeoJSON, eventtype=earthquake).")
@@ -133,29 +130,35 @@ def main():
         st.header("Start")
         st.write("Open one of the earthquake pages from the sidebar or the links below.")
 
-        col_left, col_right = st.columns(2)
-        with col_left:
-            st.subheader("4D Visualizer")
+        col_basic, col_advanced, col_compare = st.columns(3)
+
+        with col_basic:
+            st.subheader("4D Visualizer Earthquake")
             st.write(
-                "Fetch USGS earthquake data, filter by date, magnitude, depth, and area, "
-                "then visualize the results as 2D maps, 3D/4D hypocenter plots, "
-                "cross-sections, depth profiles, and time histograms."
-            )
-            render_page_link(
-                "pages/55_4D_Visualizer_Earthquake_Advanced.py",
-                "Open 4D Visualizer Earthquake Advanced",
+                "A simple earthquake-only visualizer. Fetch USGS earthquake data, "
+                "filter by date, magnitude, depth, and area, then view the results "
+                "as basic 2D and 3D/4D hypocenter maps."
             )
 
-        with col_right:
+
+        with col_advanced:
+            st.subheader("4D Visualizer Earthquake Advanced")
+            st.write(
+                "An advanced visualizer for detailed earthquake exploration. "
+                "It includes 2D maps, 3D/4D hypocenter plots, plate-boundary overlays, "
+                "cross-sections, depth profiles, and time histograms."
+            )
+
+
+        with col_compare:
             st.subheader("JMA / NIED Comparison")
             st.write(
                 "Compare the current USGS query with a user-uploaded JMA, NIED Hi-net, "
-                "or JMA unified catalog table. This page does not scrape JMA/NIED data."
+                "JMA unified catalog, or related local catalog table. "
+                "This page does not scrape JMA/NIED data."
             )
-            render_page_link(
-                "pages/56_Earthquake_JMA_NIED_Comparison.py",
-                "Open JMA / NIED Comparison",
-            )
+
+
 
         st.info("3D views are recommended for PC. On smartphones and tablets, the 2D map is recommended.")
 
@@ -174,7 +177,7 @@ def main():
         st.header("About")
         st.write(
             "EnvGeo-Earthquake is a compact earthquake visualization app created from "
-            "the EnvGeo-Seawater code base. EnvGeo-Seawater originally focused on "
+            "the EnvGeo-Seawater(https://envgeo.h.kyoto-u.ac.jp/sw_jpn/) code base. EnvGeo-Seawater originally focused on "
             "interactive 3D/4D visualization of oceanographic and geochemical datasets; "
             "this earthquake version reuses that spatial visualization idea for "
             "hypocenter data."
@@ -248,19 +251,8 @@ Core concepts:
             """
         )
 
-        st.subheader("Source certainty / 出典確認状況")
-        st.markdown(
-            """
-- High confidence: USGS API parameters, GeoJSON output, earthquake filtering, the 20,000-event limit, ANSS/ComCat DOI, USGS plate-boundary service, JMA official pages, and NIED Hi-net guidance are supported by official/provider pages.
-- Medium confidence: basemap tiles are suitable as interactive reference layers when provider attribution is retained; for papers, handouts, and static exports, re-check each provider's current terms.
-- Unresolved: the local coastline Excel files do not contain source or license metadata in this repository. They should be treated only as visual reference overlays unless their provenance is recovered.
-- Secondary reference: the Zenn article is useful implementation background, not a primary data source or licensing authority.
-            """
-        )
-        st.caption(
-            "ローカル海岸線ファイルの上流データは、このリポジトリ内では確認できませんでした。"
-            "論文・教材で海岸線データ自体を引用する場合は、出典が明確なデータへ置き換えてください。"
-        )
+
+
 
         st.subheader("Source links")
         render_source_links()
@@ -290,7 +282,6 @@ Core concepts:
 - This app is not an earthquake early-warning, tsunami-warning, or official disaster-response tool.
 - Plate-boundary overlays are approximate regional/global context lines.
 - JMA/NIED data comparison requires user-uploaded files; provider terms should be checked by the user.
-- Local coastline files are reference overlays only; their upstream provenance is not documented in this repository.
 - 3D Plotly interaction is heavy on small screens; PC use is recommended for 3D and 2D is recommended for smartphones/tablets.
 - Very large global queries may be slow because the browser renders many interactive points.
             """

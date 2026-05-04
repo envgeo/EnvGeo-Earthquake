@@ -409,7 +409,7 @@ def load_usgs_earthquake_data(
     query_url = f"{USGS_EARTHQUAKE_QUERY_URL}?{urlencode(params)}"
     request = Request(
         query_url,
-        headers={"User-Agent": "EnvGeoSeawater earthquake visualizer"},
+        headers={"User-Agent": "EnvGeo-Earthquake visualizer"},
     )
 
     try:

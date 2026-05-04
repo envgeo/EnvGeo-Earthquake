@@ -11,8 +11,7 @@ This application was created by adapting the spatial 3D/4D visualization workflo
 of **EnvGeo-Seawater** (https://envgeo.h.kyoto-u.ac.jp/sw_jpn/) to earthquake catalog data. The original EnvGeo-Seawater
 project focused on interactive visualization of oceanographic and marine
 geochemical data. EnvGeo-Earthquake keeps the educational, exploratory, and
-source-aware philosophy of that project, but removes the ocean chemistry
-workflow from the earthquake pages.
+source-aware philosophy of that project.
 
 The app is intended for **simple research, teaching, and exploratory
 visualization**. It is not an official earthquake alert, tsunami warning,
@@ -33,23 +32,25 @@ Catalog API and visualizes the result as:
 - Japan-focused comparison with uploaded JMA/NIED catalog tables
 - plate-boundary overlays from USGS where available
 
-The current earthquake pages do not use seawater isotope or ocean chemistry
-datasets.
+
 
 ---
 
 ## Main Pages
 
-- `pages/54_4D_Visualizer_Earthquake.py`  
+The app uses the following Streamlit page files. 
+
+- `pages/54_4D_Visualizer_Earthquake.py`
   Basic earthquake-only USGS hypocenter visualizer.
 
-- `pages/55_4D_Visualizer_Earthquake_Advanced.py`  
+- `pages/55_4D_Visualizer_Earthquake_Advanced.py`
   Advanced earthquake visualizer with plate boundaries, 2D/3D maps,
   cross-section, depth profile, time histogram, and JMA/NIED comparison tab.
 
-- `pages/56_Earthquake_JMA_NIED_Comparison.py`  
+- `pages/56_Earthquake_JMA_NIED_Comparison.py`
   Japan-focused page for comparing the current USGS query with a user-uploaded
   JMA, NIED Hi-net, JMA unified catalog, or related local catalog table.
+
 
 ---
 
@@ -225,20 +226,18 @@ The app uses several map background styles through Plotly Mapbox layers:
 The following status was checked against official or provider pages on
 2026-05-04.
 
-- High confidence: USGS FDSN Event Web Service/API parameters, GeoJSON output,
+- USGS FDSN Event Web Service/API parameters, GeoJSON output,
   `eventtype=earthquake`, depth/magnitude/location/time filters, and the
   20,000-event service limit are documented by USGS.
-- High confidence: the ANSS Comprehensive Catalog citation and DOI
+- The ANSS Comprehensive Catalog citation and DOI
   `10.5066/F7MS3QZH` are listed by the FDSN USGS data-center record.
-- High confidence: the plate-boundary overlay is an official USGS ArcGIS REST
+- The plate-boundary overlay is an official USGS ArcGIS REST
   service with `Plates (1)` and `Microplates (0)` layers. Its own metadata cites
   Bird (2003), DeMets et al. (2010), and the USGS Seismicity of the Earth Map
   Series.
-- High confidence: JMA and NIED links are official provider pages. The app does
+- JMA and NIED links are official provider pages. The app does
   not scrape them; it only accepts user-uploaded comparison tables.
-- Medium confidence: standard, satellite, bathymetry, and GSI background tiles
-  are appropriate as interactive reference layers when their visible/provider
-  attribution is retained. For papers, figures, printed handouts, or static
+- For papers, figures, printed handouts, or static
   exports, re-check each tile provider's current terms and required attribution.
 - Coastline data used for plotting were derived from Natural Earth public domain vector data.
 
@@ -252,24 +251,6 @@ This project is designed for Python 3.10 to 3.12.
 pip install -r requirements.txt
 ```
 
-For macOS Apple Silicon, geospatial packages such as Cartopy may be easier to
-install through conda-forge before installing the remaining Python packages:
-
-```bash
-conda create -n envgeo-earthquake python=3.12
-conda activate envgeo-earthquake
-conda install -c conda-forge proj pyproj cartopy -y
-pip install -r requirements.txt
-```
-
-Optional future interactive cross-section drawing with Leaflet/Folium would use:
-
-```bash
-pip install folium streamlit-folium
-```
-
-These optional packages are not required for the current Plotly-based
-cross-section controls.
 
 ---
 
@@ -352,8 +333,12 @@ df.attrs["query_url"]
   Main Streamlit entry point for EnvGeo-Earthquake.
 
 - `envgeo_utils.py`  
-  Shared utilities, including USGS API loading, GeoJSON normalization,
+  Shared low-level utilities, including USGS API loading, GeoJSON normalization,
   mapping styles, coastline loading, and cache clearing.
+
+- `envgeo_earthquake_utils.py`  
+  Earthquake-specific Streamlit controls, plate-boundary overlays, 2D/3D maps,
+  cross-sections, depth profiles, time histograms, and JMA/NIED comparison helpers.
 
 - `pages/54_4D_Visualizer_Earthquake.py`  
   Basic earthquake visualizer.
