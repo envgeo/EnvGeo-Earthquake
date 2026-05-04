@@ -1,726 +1,318 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-USGS earthquake hypocenter 4D visualizer for EnvGeo.
-Created on Sun May 1 2026
-Created from 04_4D_Visualizer.py and simplified as an earthquake-only page.
+Home page for EnvGeo-Earthquake.
+
+This page is adapted from the EnvGeo-Seawater Streamlit home page and rewritten
+for a simple research/education earthquake visualization app.
 """
 
-import math
-from datetime import datetime, time, timedelta, timezone
+import re
+from pathlib import Path
 
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
 
-import envgeo_utils
+
+BASE_DIR = Path(__file__).resolve().parent
+APP_VERSION = "0.2.0-earthquake-20260504"
+
+URLS = {
+    "lab": "https://envgeo.h.kyoto-u.ac.jp/sw_jpn/",
+    "contact": "https://www.h.kyoto-u.ac.jp/en_f/faculty_f/ishimura_toyoho_4dea/#mailform",
+    "usgs_api": "https://earthquake.usgs.gov/fdsnws/event/1/",
+    "usgs_comcat": "https://www.fdsn.org/datacenters/detail/USGS/",
+    "usgs_credit": "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits",
+    "usgs_plate": "https://earthquake.usgs.gov/arcgis/rest/services/eq/map_plateboundaries/MapServer",
+    "jma_info": "https://www.data.jma.go.jp/eqev/data/en/guide/earthinfo.html",
+    "jma_bulletin": "https://www.data.jma.go.jp/eqev/data/bulletin/index_e.html",
+    "nied_hinet": "https://www.hinet.bosai.go.jp/about_data/?LANG=en",
+    "carto_basemaps": "https://carto.com/basemaps",
+    "osm_copyright": "https://www.openstreetmap.org/copyright",
+    "usgs_imagery": "https://basemap.nationalmap.gov/arcgis/rest/services/USGSImageryOnly/MapServer",
+    "esri_ocean": "https://services.arcgisonline.com/arcgis/rest/services/Ocean/World_Ocean_Base/MapServer",
+    "esri_basemap_attribution": "https://support.esri.com/en-us/knowledge-base/what-is-the-correct-way-to-cite-an-arcgis-online-basema-000012040",
+    "gsi_tiles": "https://maps.gsi.go.jp/development/ichiran.html",
+    "gsi_terms": "https://maps.gsi.go.jp/help/termsofuse.html",
+}
 
 
-version = "0.1.4"
-
-
-def expanded_float_bounds(series, default_min, default_max, pad=1.0):
-    """
-    Return stable slider bounds even when the data are empty or have one value.
-    """
-    values = pd.to_numeric(series, errors="coerce").dropna()
-    if values.empty:
-        return float(default_min), float(default_max)
-
-    min_value = float(values.min())
-    max_value = float(values.max())
-    if min_value == max_value:
-        min_value -= pad
-        max_value += pad
-
-    return min_value, max_value
-
-
-def earthquake_color_scale(color_column):
-    """
-    Color scales for hypocenter depth and magnitude.
-    """
-    if color_column == "Depth_km":
-        return [
-            [0.0, "red"],
-            [0.08, "orange"],
-            [0.18, "yellow"],
-            [0.35, "lightgreen"],
-            [0.55, "lightblue"],
-            [0.75, "blue"],
-            [1.0, "darkblue"],
-        ]
-
-    return ["green", "yellow", "orange", "red", "darkred"]
-
-
-def build_datetime_range(date_range, start_clock, end_clock):
-    """
-    Build UTC datetime objects from Streamlit date/time widgets.
-    """
-    if not isinstance(date_range, (tuple, list)) or len(date_range) != 2:
-        return None, None
-
-    start_date, end_date = date_range
-    start_dt = datetime.combine(start_date, start_clock, tzinfo=timezone.utc)
-    end_dt = datetime.combine(end_date, end_clock, tzinfo=timezone.utc)
-    return start_dt, end_dt
-
-
-def auto_map_view(df):
-    """
-    Compute a map center and zoom from the selected earthquake distribution.
-    """
-    lat_min, lat_max = df["Latitude_degN"].min(), df["Latitude_degN"].max()
-    lon_min, lon_max = df["Longitude_degE"].min(), df["Longitude_degE"].max()
-
-    center_lat = (lat_min + lat_max) / 2
-    center_lon = (lon_min + lon_max) / 2
-    lat_diff = max(lat_max - lat_min, 0.1)
-    lon_diff = max(lon_max - lon_min, 0.1)
-
-    map_width_px, map_height_px = 1200, 700
-    zoom_lon = math.log2((map_width_px * 360) / (lon_diff * 256))
-    zoom_lat = math.log2((map_height_px * 180) / (lat_diff * 256))
-    auto_zoom = max(1, min(15, min(zoom_lon, zoom_lat) - 2.0))
-
-    if lon_diff > 220:
-        center_lat, center_lon, auto_zoom = 0.0, 0.0, 1.0
-
-    return center_lat, center_lon, auto_zoom
-
-
-def lonlat_to_local_km(longitudes, latitudes, center_lon, center_lat):
-    """
-    Convert lon/lat coordinates to local equirectangular kilometers.
-    """
-    lon_values = pd.to_numeric(pd.Series(longitudes), errors="coerce")
-    lat_values = pd.to_numeric(pd.Series(latitudes), errors="coerce")
-
-    km_per_lat_degree = 110.574
-    km_per_lon_degree = 111.320 * math.cos(math.radians(center_lat))
-    if abs(km_per_lon_degree) < 0.001:
-        km_per_lon_degree = 0.001
-
-    east_km = (lon_values - center_lon) * km_per_lon_degree
-    north_km = (lat_values - center_lat) * km_per_lat_degree
-    return east_km, north_km
-
-
-def add_local_km_coordinates(df, query):
-    """
-    Add local kilometer coordinates for 3D plots with correct horizontal scale.
-    """
-    df_km = df.copy()
-    center_lon = (query["lon_min"] + query["lon_max"]) / 2
-    center_lat = (query["lat_min"] + query["lat_max"]) / 2
-
-    east_km, north_km = lonlat_to_local_km(
-        df_km["Longitude_degE"],
-        df_km["Latitude_degN"],
-        center_lon,
-        center_lat,
-    )
-    df_km["East_km"] = east_km
-    df_km["North_km"] = north_km
-    return df_km, center_lon, center_lat
-
-
-def selected_area_km_ranges(query, center_lon, center_lat, z_min, z_max):
-    """
-    Convert the selected lon/lat/depth box into km ranges and aspect ratios.
-    """
-    x_bounds, _ = lonlat_to_local_km(
-        [query["lon_min"], query["lon_max"]],
-        [center_lat, center_lat],
-        center_lon,
-        center_lat,
-    )
-    _, y_bounds = lonlat_to_local_km(
-        [center_lon, center_lon],
-        [query["lat_min"], query["lat_max"]],
-        center_lon,
-        center_lat,
-    )
-
-    x_range = [float(x_bounds.iloc[0]), float(x_bounds.iloc[1])]
-    y_range = [float(y_bounds.iloc[0]), float(y_bounds.iloc[1])]
-    z_range = [float(z_max), float(z_min)]
-
-    x_span = max(abs(x_range[1] - x_range[0]), 1.0)
-    y_span = max(abs(y_range[1] - y_range[0]), 1.0)
-    z_span = max(abs(z_max - z_min), 1.0)
-    max_span = max(x_span, y_span, z_span)
-    horizontal_aspect = max(x_span, y_span) / max_span
-
-    return (
-        x_range,
-        y_range,
-        z_range,
-        dict(
-            x=x_span / max_span,
-            y=y_span / max_span,
-            z=horizontal_aspect * 0.5,
+st.set_page_config(
+    page_title="EnvGeo-Earthquake",
+    initial_sidebar_state="auto",
+    menu_items={
+        "Get Help": URLS["usgs_api"],
+        "Report a bug": URLS["contact"],
+        "About": (
+            "EnvGeo-Earthquake: a simple research/education earthquake "
+            "visualization app based on EnvGeo-Seawater."
         ),
-    )
+    },
+)
 
 
-def set_region_japan():
+def render_markdown_streamlit(md_text: str, base_dir: Path | None = None) -> None:
     """
-    Keep the main-page region checkboxes mutually exclusive.
+    Render markdown while keeping local images visible in Streamlit.
     """
-    if st.session_state.eq_region_japan:
-        st.session_state.eq_region_global = False
-        st.session_state.eq_region_choice = "Japan and surrounding area"
-    elif not st.session_state.eq_region_global:
-        st.session_state.eq_region_japan = True
-        st.session_state.eq_region_choice = "Japan and surrounding area"
+    image_pattern = re.compile(r"!\[(.*?)\]\((.*?)\)")
+    buffer = []
+
+    for line in md_text.splitlines():
+        match = image_pattern.fullmatch(line.strip())
+        if match:
+            if buffer:
+                st.markdown("\n".join(buffer), unsafe_allow_html=True)
+                buffer = []
+
+            caption, image_path = match.groups()
+            if base_dir and not image_path.startswith(("http://", "https://", "data:")):
+                image_path = str((base_dir / image_path).resolve())
+            st.image(image_path, caption=caption if caption else None)
+        else:
+            buffer.append(line)
+
+    if buffer:
+        st.markdown("\n".join(buffer), unsafe_allow_html=True)
 
 
-def set_region_global():
-    """
-    Keep the main-page region checkboxes mutually exclusive.
-    """
-    if st.session_state.eq_region_global:
-        st.session_state.eq_region_japan = False
-        st.session_state.eq_region_choice = "Global"
-    elif not st.session_state.eq_region_japan:
-        st.session_state.eq_region_global = True
-        st.session_state.eq_region_choice = "Global"
+def read_text_file(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
 
 
-def main_region_selector():
-    """
-    Select Japan-area or global API bounds from the main page.
-    """
-    if "eq_region_choice" not in st.session_state:
-        st.session_state.eq_region_choice = "Japan and surrounding area"
-    if "eq_region_japan" not in st.session_state:
-        st.session_state.eq_region_japan = True
-    if "eq_region_global" not in st.session_state:
-        st.session_state.eq_region_global = False
-
-    st.subheader("Region")
-    col_japan, col_global = st.columns(2)
-    with col_japan:
-        st.checkbox(
-            "Japan and surrounding area",
-            key="eq_region_japan",
-            on_change=set_region_japan,
-        )
-    with col_global:
-        st.checkbox(
-            "Global",
-            key="eq_region_global",
-            on_change=set_region_global,
-        )
-
-    if st.session_state.eq_region_global:
-        return "Global"
-    return "Japan and surrounding area"
+def render_external_link(label: str, url: str) -> None:
+    if hasattr(st, "link_button"):
+        st.link_button(label, url)
+    else:
+        st.markdown(f"[{label}]({url})")
 
 
-def sidebar_controls(region_preset):
-    """
-    Sidebar controls for USGS API query parameters.
-    """
-    now_utc = datetime.now(timezone.utc)
-    default_end_date = now_utc.date()
-    default_start_date = default_end_date - timedelta(days=30)
-
-    region_defaults = {
-        "Japan and surrounding area": (120.0, 155.0, 20.0, 50.0),
-        "Global": (-180.0, 180.0, -90.0, 90.0),
-    }
-
-    default_lon_min, default_lon_max, default_lat_min, default_lat_max = region_defaults[region_preset]
-
-    with st.sidebar.form("earthquake_api_parameter", clear_on_submit=False):
-        st.header(":blue[--- USGS Earthquake API ---]")
-        date_range = st.date_input(
-            "Date range (UTC)",
-            value=(default_start_date, default_end_date),
-            key="eq_date_range",
-        )
-
-        col_start, col_end = st.columns(2)
-        with col_start:
-            start_clock = st.time_input(
-                "Start time",
-                value=time(0, 0),
-                step=3600,
-                key="eq_start_clock",
-            )
-        with col_end:
-            end_clock = st.time_input(
-                "End time",
-                value=time(23, 59),
-                step=3600,
-                key="eq_end_clock",
-            )
-
-        mag_min, mag_max = st.slider(
-            "Magnitude",
-            min_value=0.0,
-            max_value=10.0,
-            value=(4.5, 10.0),
-            step=0.1,
-            key="eq_magnitude_range",
-        )
-
-        depth_min, depth_max = st.slider(
-            "Hypocenter depth (km)",
-            min_value=-100.0,
-            max_value=1000.0,
-            value=(0.0, 700.0),
-            step=10.0,
-            key="eq_depth_range",
-        )
-
-        with st.expander("Latitude / Longitude", expanded=True):
-            lon_min, lon_max = st.slider(
-                "Longitude",
-                min_value=-180.0,
-                max_value=180.0,
-                value=(default_lon_min, default_lon_max),
-                step=0.5,
-                key=f"eq_lon_range_{region_preset}",
-            )
-            lat_min, lat_max = st.slider(
-                "Latitude",
-                min_value=-90.0,
-                max_value=90.0,
-                value=(default_lat_min, default_lat_max),
-                step=0.5,
-                key=f"eq_lat_range_{region_preset}",
-            )
-
-        orderby = st.selectbox(
-            "Order by",
-            ["time", "time-asc", "magnitude", "magnitude-asc"],
-            index=0,
-            key="eq_orderby",
-            help=(
-                "**Select data priority / データの優先順位を選択:**\n\n"
-                "- **time**: Newest first / 新しい順 (Default)\n"
-                "- **time-asc**: Oldest first / 古い順\n"
-                "- **magnitude**: Largest first / マグニチュードが大きい順\n"
-                "- **magnitude-asc**: Smallest first / マグニチュードが小さい順\n\n"
-                "**Usage Tip / 使い方:**\n\n"
-                "If you want to quickly see recent events, keep it set to **'time'**. "
-                "However, if you want to ensure large historical earthquakes in a specific area are displayed without being missed due to the API limit, switching to **'magnitude'** is more effective.\n\n"
-                "最近の地震を見たい場合は **'time'** 、巨大地震を優先して表示したい場合は、**'magnitude'** で。"
-            )
-        )
-
-        limit = st.number_input(
-            "Max events",
-            min_value=1,
-            max_value=20000,
-            value=2000,
-            step=100,
-            key="eq_limit",
-        )
-
-        st.form_submit_button(":red[Fetch / update]")
-
-    start_dt, end_dt = build_datetime_range(date_range, start_clock, end_clock)
-    if start_dt is None or end_dt is None:
-        st.warning("Please select both start and end dates.")
-        st.stop()
-    if start_dt > end_dt:
-        st.warning("Start datetime must be earlier than end datetime.")
-        st.stop()
-
-    return {
-        "region_preset": region_preset,
-        "start_dt": start_dt,
-        "end_dt": end_dt,
-        "mag_min": mag_min,
-        "mag_max": mag_max,
-        "depth_min": depth_min,
-        "depth_max": depth_max,
-        "lat_min": lat_min,
-        "lat_max": lat_max,
-        "lon_min": lon_min,
-        "lon_max": lon_max,
-        "limit": int(limit),
-        "orderby": orderby,
-    }
+def render_page_link(page_path: str, label: str) -> None:
+    if hasattr(st, "page_link"):
+        st.page_link(page_path, label=label)
+    else:
+        st.markdown(f"`{page_path}`: {label}")
 
 
-def fetch_earthquake_dataframe(query):
-    """
-    Fetch earthquake records from USGS with the sidebar query.
-    """
-    with st.spinner("Fetching earthquake hypocenters from USGS..."):
-        try:
-            return envgeo_utils.load_usgs_earthquake_data(
-                query["start_dt"],
-                query["end_dt"],
-                minmagnitude=query["mag_min"],
-                maxmagnitude=query["mag_max"],
-                mindepth=query["depth_min"],
-                maxdepth=query["depth_max"],
-                minlatitude=query["lat_min"],
-                maxlatitude=query["lat_max"],
-                minlongitude=query["lon_min"],
-                maxlongitude=query["lon_max"],
-                limit=query["limit"],
-                orderby=query["orderby"],
-            )
-        except RuntimeError as e:
-            st.error(str(e))
-            st.stop()
-
-
-def prepare_plot_dataframe(df_eq):
-    """
-    Keep plottable hypocenter rows and define marker sizes from magnitude.
-    """
-    df_plot = df_eq.dropna(subset=["Longitude_degE", "Latitude_degN", "Depth_km"]).copy()
-    if df_plot.empty:
-        return df_plot
-
-    magnitude = pd.to_numeric(df_plot["Magnitude"], errors="coerce").fillna(0).clip(lower=0)
-    df_plot["MarkerSize"] = (magnitude + 1.0) ** 2
-    df_plot["MagnitudeMarkerSize"] = 2.0 + magnitude * 3.0
-    return df_plot
-
-
-def visualization_controls(df_plot, query):
-    """
-    Sidebar and main-panel controls for 4D rendering.
-    """
-    with st.sidebar.container(border=True):
-        st.subheader(":blue[--- Visualization ---]")
-
-        depth_min_actual, depth_max_actual = expanded_float_bounds(
-            df_plot["Depth_km"], query["depth_min"], query["depth_max"], pad=10.0
-        )
-        depth_slider_min = float(math.floor(depth_min_actual / 10.0) * 10.0)
-        depth_slider_max = float(math.ceil(depth_max_actual / 10.0) * 10.0)
-        if depth_slider_min == depth_slider_max:
-            depth_slider_max += 10.0
-
-        fig_depth_min, fig_depth_max = st.slider(
-            "Depth scale (km)",
-            min_value=depth_slider_min,
-            max_value=1000.0,
-            value=(depth_slider_min, depth_slider_max),
-            step=10.0,
-            key="eq_fig_depth_scale",
-        )
-
-        marker_size_scale = st.slider(
-            "Marker size scale",
-            min_value=0.2,
-            max_value=3.0,
-            value=1.0,
-            step=0.1,
-            key="eq_marker_size_scale",
-        )
-
-        color_option = st.radio(
-            "Colorbar variable",
-            ["Magnitude", "Hypocenter depth"],
-            horizontal=False,
-            key="eq_color_option",
-        )
-
-    color_column = "Depth_km" if color_option == "Hypocenter depth" else "Magnitude"
-    color_label = "Depth (km)" if color_column == "Depth_km" else "Magnitude"
-
-    c_min_actual, c_max_actual = expanded_float_bounds(
-        df_plot[color_column], 0.0, 1.0, pad=1.0
-    )
-    c_step = 10.0 if color_column == "Depth_km" else 0.1
-    c_slider_min = float(math.floor(c_min_actual / c_step) * c_step)
-    c_slider_max = float(math.ceil(c_max_actual / c_step) * c_step)
-    if c_slider_min == c_slider_max:
-        c_slider_max += c_step
-
-    color_range = st.slider(
-        f"Colorbar scale adjustment: {color_label}",
-        min_value=0.0,
-        max_value=c_slider_max,
-        value=(c_slider_min, c_slider_max),
-        step=c_step,
-        key=f"eq_colorbar_{color_column}",
-    )
-
-    return {
-        "fig_depth_min": fig_depth_min,
-        "fig_depth_max": fig_depth_max,
-        "marker_size_scale": marker_size_scale,
-        "color_column": color_column,
-        "color_label": color_label,
-        "color_range": color_range,
-    }
-
-
-def render_4d_hypocenter_map(df_plot, query, viz):
-    """
-    Render the EnvGeo-style 4D hypocenter map.
-    """
-    df_plot, center_lon, center_lat = add_local_km_coordinates(df_plot, query)
-    df_plot["MarkerSize"] = df_plot["MarkerSize"] * viz["marker_size_scale"]
-    df_plot = df_plot.sort_values(by=["Depth_km", "Magnitude"], ascending=[False, True])
-
-    x_range, y_range, z_range, aspectratio = selected_area_km_ranges(
-        query,
-        center_lon,
-        center_lat,
-        viz["fig_depth_min"],
-        viz["fig_depth_max"],
-    )
-
-    fig_eq = px.scatter_3d(
-        df_plot,
-        x="East_km",
-        y="North_km",
-        z="Depth_km",
-        color=viz["color_column"],
-        size="MarkerSize",
-        size_max=18,
-        width=700,
-        height=620,
-        color_continuous_scale=earthquake_color_scale(viz["color_column"]),
-        hover_data={
-            "DateTime_UTC": True,
-            "Place": True,
-            "Magnitude": True,
-            "MagnitudeType": True,
-            "Depth_km": True,
-            "Longitude_degE": True,
-            "Latitude_degN": True,
-            "EventID": True,
-            "East_km": False,
-            "North_km": False,
-            "MarkerSize": False,
-        },
-    )
-
-    fig_eq.update_traces(
-        mode="markers",
-        marker=dict(opacity=0.78, line=dict(color="white", width=0.5)),
-        name="USGS earthquakes",
-    )
-
-    fig_eq.update_layout(
-        scene=dict(
-            xaxis_title="East-West distance (km)",
-            yaxis_title="North-South distance (km)",
-            zaxis_title="Hypocenter depth (km)",
-            xaxis=dict(range=x_range),
-            yaxis=dict(range=y_range),
-            zaxis=dict(
-                range=z_range,
-                autorange=False,
-            ),
-            aspectmode="manual",
-            aspectratio=aspectratio,
-            camera=dict(
-                eye=dict(x=-0.8, y=-0.9, z=1.8),
-                center=dict(x=0, y=0, z=-0.1),
-            ),
-        ),
-        coloraxis_colorbar=dict(
-            title=viz["color_label"],
-            orientation="h",
-            yanchor="top",
-            y=-0.15,
-            x=0.5,
-            xanchor="center",
-            thickness=15,
-        ),
-        margin=dict(r=20, l=10, b=110, t=10),
-    )
-    fig_eq.update_coloraxes(
-        cmin=viz["color_range"][0],
-        cmax=viz["color_range"][1],
-    )
-
-    coastline_x, coastline_y = envgeo_utils.load_coastline_data(envgeo_utils.data_source_GLOBAL)
-    if coastline_x and coastline_y:
-        coastline_east, coastline_north = lonlat_to_local_km(
-            coastline_x,
-            coastline_y,
-            center_lon,
-            center_lat,
-        )
-        fig_eq.add_trace(
-            go.Scatter3d(
-                x=coastline_east,
-                y=coastline_north,
-                z=[viz["fig_depth_min"]] * len(coastline_x),
-                mode="lines",
-                name="coastline (top)",
-                line=dict(color="blue", width=0.8),
-                hoverinfo="none",
-            )
-        )
-        fig_eq.add_trace(
-            go.Scatter3d(
-                x=coastline_east,
-                y=coastline_north,
-                z=[viz["fig_depth_max"]] * len(coastline_x),
-                mode="lines",
-                name="coastline (bottom)",
-                line=dict(color="gray", width=0.5),
-                hoverinfo="none",
-            )
-        )
-
-    st.plotly_chart(
-        fig_eq,
-        key="earthquake_4d_hypocenter_map",
-        config={"scrollZoom": True, "displayModeBar": True},
-    )
-
-
-def render_2d_distribution_map(df_plot, viz):
-    """
-    Render the selected hypocenters on an interactive map.
-    """
-    st.divider()
-    st.subheader("Geographical Distribution Map (Auto-Zoom)")
-
-    map_mode = st.radio(
-        "Map Style:",
-        ["Standard", "Satellite", "Bathymetry (Sea)", "Contour (GSI)"],
-        horizontal=True,
-        key="eq_map_style",
-    )
-
-    center_lat, center_lon, auto_zoom = auto_map_view(df_plot)
-    df_map = df_plot.copy()
-    df_map["MagnitudeMarkerSize"] = df_map["MagnitudeMarkerSize"] * viz["marker_size_scale"]
-
-    fig_map = px.scatter_mapbox(
-        df_map,
-        lat="Latitude_degN",
-        lon="Longitude_degE",
-        color=viz["color_column"],
-        color_continuous_scale=earthquake_color_scale(viz["color_column"]),
-        hover_data={
-            "DateTime_UTC": True,
-            "Place": True,
-            "Magnitude": True,
-            "Depth_km": True,
-            "EventID": True,
-            "MagnitudeMarkerSize": False,
-            "MarkerSize": False,
-        },
-        opacity=0.65,
-        height=520,
-    )
-    fig_map.update_traces(
-        marker=dict(size=df_map["MagnitudeMarkerSize"].tolist())
-    )
-    fig_map = envgeo_utils.apply_map_style(fig_map, map_mode)
-    fig_map.update_layout(
-        coloraxis_colorbar=dict(
-            title=viz["color_label"],
-            orientation="h",
-            yanchor="top",
-            y=-0.15,
-            x=0.5,
-            xanchor="center",
-            thickness=15,
-        ),
-        mapbox=dict(center=dict(lat=center_lat, lon=center_lon), zoom=auto_zoom),
-        margin=dict(l=0, r=0, t=0, b=100),
-        autosize=True,
-    )
-    fig_map.update_coloraxes(
-        cmin=viz["color_range"][0],
-        cmax=viz["color_range"][1],
-    )
-
-    st.plotly_chart(
-        fig_map,
-        key="earthquake_distribution_map",
-        config={"scrollZoom": True, "displayModeBar": True},
-    )
-
-
-def display_earthquake_table(df_eq):
-    """
-    Display the USGS dataframe and offer a CSV download.
-    """
-    with st.expander("selected earthquake dataset (CSV)", expanded=False):
-        table_cols = [
-            "EventID",
-            "DateTime_UTC",
-            "Magnitude",
-            "MagnitudeType",
-            "Depth_km",
-            "Longitude_degE",
-            "Latitude_degN",
-            "Place",
-            "URL",
-        ]
-        df_table = df_eq[[col for col in table_cols if col in df_eq.columns]].copy()
-        df_table = df_table.astype(str).replace(["<NA>", "nan", "NaT", "None"], "")
-        st.dataframe(df_table)
-        st.download_button(
-            "Download CSV",
-            data=df_table.to_csv(index=False).encode("utf-8"),
-            file_name="usgs_earthquake_catalog.csv",
-            mime="text/csv",
-        )
+def render_source_links() -> None:
+    st.markdown(f"- [USGS Earthquake Catalog API]({URLS['usgs_api']})")
+    st.markdown(f"- [ANSS Comprehensive Catalog citation]({URLS['usgs_comcat']})")
+    st.markdown(f"- [USGS Copyrights and Credits]({URLS['usgs_credit']})")
+    st.markdown(f"- [USGS Tectonic Plate Boundaries]({URLS['usgs_plate']})")
+    st.markdown(f"- [JMA Earthquake Information]({URLS['jma_info']})")
+    st.markdown(f"- [JMA Seismological Bulletin of Japan]({URLS['jma_bulletin']})")
+    st.markdown(f"- [NIED Hi-net data guidance]({URLS['nied_hinet']})")
+    st.markdown(f"- [CARTO Basemaps]({URLS['carto_basemaps']})")
+    st.markdown(f"- [OpenStreetMap copyright and license]({URLS['osm_copyright']})")
+    st.markdown(f"- [USGS National Map imagery tiles]({URLS['usgs_imagery']})")
+    st.markdown(f"- [Esri Ocean Basemap attribution guidance]({URLS['esri_basemap_attribution']})")
+    st.markdown(f"- [GSI tile list]({URLS['gsi_tiles']})")
+    st.markdown(f"- [GSI terms of use]({URLS['gsi_terms']})")
 
 
 def main():
-    st.header(f"EnvGeo-Earthquake")
-    st.header(f"4D Visualizer Earthquake ({version})")
-    st.caption("Source: USGS Earthquake Catalog. Data may be preliminary and updated.")
-    st.caption("震源データ: USGS Earthquake Catalog。速報値を含み、更新される場合があります。")
+    st.title("EnvGeo-Earthquake")
+    st.subheader("Simple earthquake hypocenter visualization for research and education")
+    st.write(
+        "EnvGeo-Earthquake is a Streamlit app for exploring earthquake hypocenters "
+        "by time, location, magnitude, and depth. It was built by adapting the "
+        "EnvGeo-Seawater 3D/4D visualization workflow to earthquake catalog data."
+    )
+    st.write(f"Version: {APP_VERSION}")
+    st.caption("Data source: USGS Earthquake Catalog API (GeoJSON, eventtype=earthquake).")
+    st.warning(
+        "This app is for research, education, and exploratory visualization. "
+        "It is not an official earthquake alert, tsunami warning, hazard assessment, "
+        "or disaster-response tool."
+    )
 
-    with st.expander("Data use note / データ利用上の注意", expanded=False):
+    tab_main, tab_about, tab_sources, tab_manual, tab_limits, tab_readme = st.tabs(
+        ["MAIN", "ABOUT", "DATA SOURCES", "MANUAL", "LIMITATIONS", "README"]
+    )
+
+    with tab_main:
+        st.header("Start")
+        st.write("Open one of the earthquake pages from the sidebar or the links below.")
+
+        col_left, col_right = st.columns(2)
+        with col_left:
+            st.subheader("4D Visualizer")
+            st.write(
+                "Fetch USGS earthquake data, filter by date, magnitude, depth, and area, "
+                "then visualize the results as 2D maps, 3D/4D hypocenter plots, "
+                "cross-sections, depth profiles, and time histograms."
+            )
+            render_page_link(
+                "pages/55_4D_Visualizer_Earthquake_Advanced.py",
+                "Open 4D Visualizer Earthquake Advanced",
+            )
+
+        with col_right:
+            st.subheader("JMA / NIED Comparison")
+            st.write(
+                "Compare the current USGS query with a user-uploaded JMA, NIED Hi-net, "
+                "or JMA unified catalog table. This page does not scrape JMA/NIED data."
+            )
+            render_page_link(
+                "pages/56_Earthquake_JMA_NIED_Comparison.py",
+                "Open JMA / NIED Comparison",
+            )
+
+        st.info("3D views are recommended for PC. On smartphones and tablets, the 2D map is recommended.")
+
+        st.subheader("Typical questions")
+        st.markdown(
+            """
+- Where are recent earthquakes concentrated around Japan or globally?
+- How does hypocenter depth change across a subduction zone?
+- Are larger-magnitude events concentrated in a particular depth range?
+- How does seismicity vary through time within a selected window?
+- How do USGS locations compare with uploaded JMA/NIED catalog tables around Japan?
+            """
+        )
+
+    with tab_about:
+        st.header("About")
         st.write(
-            "This visualization is for research and educational use only. "
-            "For emergency response or official earthquake information, refer to official agencies."
+            "EnvGeo-Earthquake is a compact earthquake visualization app created from "
+            "the EnvGeo-Seawater code base. EnvGeo-Seawater originally focused on "
+            "interactive 3D/4D visualization of oceanographic and geochemical datasets; "
+            "this earthquake version reuses that spatial visualization idea for "
+            "hypocenter data."
         )
         st.write(
-            "本ページは研究・教育・可視化を目的としたものです。"
-            "防災判断や緊急対応には、必ず気象庁などの公式情報を確認してください。"
+            "The goal is not to replace official earthquake services. The goal is to "
+            "make catalog filtering, 2D/3D mapping, cross-section analysis, and "
+            "source-aware data handling accessible in a teaching or exploratory "
+            "research setting."
         )
-        st.write("Data source: USGS Earthquake Catalog API (GeoJSON, eventtype=earthquake).")
+        st.markdown(
+            """
+Core concepts:
+
+- 4D visualization: longitude, latitude, depth, and color/size as magnitude or depth.
+- Reproducible query: the USGS API URL is shown for each data request.
+- Transparent source notes: earthquake data, plate boundaries, and comparison datasets are identified in the app.
+- Conservative use: preliminary catalog data and approximate plate boundaries are treated as educational/research visual aids.
+            """
+        )
+
+    with tab_sources:
+        st.header("Data Sources and References")
+        st.subheader("Earthquake catalog")
         st.write(
-            "Earthquake data are accessed from the USGS Earthquake Catalog. "
-            "USGS data may be revised after publication."
+            "Earthquake hypocenters are retrieved from the USGS Earthquake Catalog API, "
+            "which implements the FDSN Event Web Service. The app requests GeoJSON "
+            "with `eventtype=earthquake` and supports filters for UTC time, magnitude, "
+            "depth, latitude/longitude bounds, order, and event limit."
+        )
+        st.write(
+            "Recommended catalog citation: U.S. Geological Survey (2017), "
+            "Advanced National Seismic System (ANSS) Comprehensive Catalog, "
+            "U.S. Geological Survey, https://doi.org/10.5066/F7MS3QZH."
+        )
+        st.write(
+            "USGS-authored or USGS-produced information is generally public domain, "
+            "but USGS requests credit. Because earthquake catalogs can include "
+            "contributions from multiple networks or agencies, publication or "
+            "redistribution should also follow any contributor-specific guidance."
         )
 
-    region_preset = main_region_selector()
-    query = sidebar_controls(region_preset)
-    df_eq = fetch_earthquake_dataframe(query)
+        st.subheader("Plate boundaries")
+        st.write(
+            "Plate boundaries are loaded from the USGS Tectonic Plate Boundaries "
+            "ArcGIS REST service when available. The app uses the Plates and optional "
+            "Microplates layers. USGS cites the Seismicity of the Earth Map Series, "
+            "Bird (2003), and DeMets et al. (2010) for this service."
+        )
+        st.write(
+            "Boundary locations are approximate and are intended for educational/research "
+            "visualization, not for official hazard assessment or disaster-response decisions."
+        )
 
-    query_url = df_eq.attrs.get("query_url", "")
-    st.write(f"{len(df_eq)} earthquake events found")
-    if query_url:
-        st.markdown(f"[USGS API query]({query_url})")
+        st.subheader("JMA / NIED comparison")
+        st.write(
+            "The comparison page is designed for manually uploaded JMA/NIED tables. "
+            "It intentionally does not automatically scrape JMA or NIED services. "
+            "Use provider guidance and acknowledgement requirements when downloading "
+            "or redistributing these catalogs."
+        )
 
-    if df_eq.empty:
-        st.warning("No earthquake data available for the selected conditions.")
-        return
+        st.subheader("Map and display layers")
+        st.markdown(
+            f"""
+- Standard map: Plotly/CARTO basemap style with OpenStreetMap attribution handled by the map layer.
+- Satellite map: [USGS National Map imagery tile service]({URLS['usgs_imagery']}).
+- Bathymetry map: [Esri World Ocean Base tiles]({URLS['esri_ocean']}); follow Esri attribution guidance for publication or static exports.
+- Contour/topographic map: [Geospatial Information Authority of Japan (GSI) standard tiles]({URLS['gsi_tiles']}).
+- Coastline overlay: local coastline coordinate files inherited from the EnvGeo mapping utilities; used only as a visual reference layer.
+            """
+        )
 
-    df_plot = prepare_plot_dataframe(df_eq)
-    if df_plot.empty:
-        st.warning("No plottable hypocenter data were returned.")
-        return
+        st.subheader("Source certainty / 出典確認状況")
+        st.markdown(
+            """
+- High confidence: USGS API parameters, GeoJSON output, earthquake filtering, the 20,000-event limit, ANSS/ComCat DOI, USGS plate-boundary service, JMA official pages, and NIED Hi-net guidance are supported by official/provider pages.
+- Medium confidence: basemap tiles are suitable as interactive reference layers when provider attribution is retained; for papers, handouts, and static exports, re-check each provider's current terms.
+- Unresolved: the local coastline Excel files do not contain source or license metadata in this repository. They should be treated only as visual reference overlays unless their provenance is recovered.
+- Secondary reference: the Zenn article is useful implementation background, not a primary data source or licensing authority.
+            """
+        )
+        st.caption(
+            "ローカル海岸線ファイルの上流データは、このリポジトリ内では確認できませんでした。"
+            "論文・教材で海岸線データ自体を引用する場合は、出典が明確なデータへ置き換えてください。"
+        )
 
-    st.subheader("4D Hypocenter Map")
-    viz = visualization_controls(df_plot, query)
-    render_4d_hypocenter_map(df_plot, query, viz)
-    render_2d_distribution_map(df_plot, viz)
-    display_earthquake_table(df_eq)
+        st.subheader("Source links")
+        render_source_links()
 
-    if st.sidebar.button("Reload / clear API cache"):
-        envgeo_utils.clear_app_cache()
-        st.rerun()
+    with tab_manual:
+        st.header("Manual")
+        st.markdown(
+            """
+1. Open `4D Visualizer Earthquake Advanced`.
+2. Choose `Japan and surrounding area` or `Global` on the main page.
+3. Set API filters in the sidebar: date/time, magnitude, hypocenter depth, latitude/longitude, order, and maximum events.
+4. Select the colorbar variable: magnitude or hypocenter depth.
+5. Use the 2D map for overview and mobile/tablet viewing.
+6. Use the 3D/4D map on a PC for depth structure and subduction-zone geometry.
+7. Use `Cross-section / depth` to define an A-B section, inspect the depth distribution, and see the section line on the map.
+8. Use `Time histogram` to inspect temporal clustering.
+9. Use `JMA/NIED comparison` to upload a compatible catalog table and compare it with the current USGS query.
+            """
+        )
+
+    with tab_limits:
+        st.header("Limitations and Use Notes")
+        st.markdown(
+            """
+- USGS earthquake data may be preliminary and can be revised after publication.
+- The USGS API limits query results to 20,000 events; the app warns when a result may be truncated.
+- This app is not an earthquake early-warning, tsunami-warning, or official disaster-response tool.
+- Plate-boundary overlays are approximate regional/global context lines.
+- JMA/NIED data comparison requires user-uploaded files; provider terms should be checked by the user.
+- Local coastline files are reference overlays only; their upstream provenance is not documented in this repository.
+- 3D Plotly interaction is heavy on small screens; PC use is recommended for 3D and 2D is recommended for smartphones/tablets.
+- Very large global queries may be slow because the browser renders many interactive points.
+            """
+        )
+        st.write(
+            "For emergency information in Japan, use official sources such as the Japan "
+            "Meteorological Agency and local government disaster information. For global "
+            "earthquake information, check the relevant official seismic agency."
+        )
+
+    with tab_readme:
+        st.header("README")
+        readme_file = BASE_DIR / "README.md"
+        if readme_file.exists():
+            with st.expander("Show README", expanded=True):
+                render_markdown_streamlit(read_text_file(readme_file), base_dir=BASE_DIR)
+        else:
+            st.info("README.md was not found.")
+
+    st.write("_____")
+    render_external_link("EnvGeo / Lab", URLS["lab"])
+
 
 if __name__ == "__main__":
     main()
