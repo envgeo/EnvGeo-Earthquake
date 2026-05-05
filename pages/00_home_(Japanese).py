@@ -14,7 +14,7 @@ import streamlit as st
 
 
 BASE_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.0-earthquake-20260504"
+APP_VERSION = "0.2.2-earthquake-20260505"
 
 URLS = {
     "lab": "https://envgeo.h.kyoto-u.ac.jp/sw_jpn/",
@@ -107,6 +107,44 @@ def render_source_links() -> None:
     st.markdown(f"- [GSI terms of use]({URLS['gsi_terms']})")
 
 
+def render_tab_style() -> None:
+    st.markdown(
+        """
+        <style>
+        div[data-baseweb="tab-list"] {
+            gap: 0.25rem;
+            flex-wrap: wrap;
+        }
+        div[data-baseweb="tab-list"] button[role="tab"] {
+            background: rgba(248, 249, 250, 0.95);
+            border: 1px solid rgba(49, 51, 63, 0.22);
+            border-radius: 6px 6px 0 0;
+            padding: 0.35rem 0.65rem;
+            min-height: 2.1rem;
+            white-space: nowrap;
+            font-weight: 600;
+        }
+        div[data-baseweb="tab-list"] button[role="tab"] p {
+            margin: 0;
+        }
+        div[data-baseweb="tab-list"] button[role="tab"][aria-selected="true"] {
+            background: linear-gradient(180deg, #e8f2ff 0%, #ddeaff 100%);
+            border-color: #4a90e2;
+            color: #0b3e75;
+            box-shadow: inset 0 0 0 1px rgba(74, 144, 226, 0.35);
+        }
+        @media (max-width: 900px) {
+            div[data-baseweb="tab-list"] button[role="tab"] {
+                font-size: 0.86rem;
+                padding: 0.30rem 0.52rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def main():
     st.title("EnvGeo-Earthquake")
     st.subheader("研究・教育向けの簡易地震震源可視化アプリ")
@@ -122,8 +160,10 @@ def main():
         "公式の地震速報、津波警報、ハザード評価、防災対応ツールではありません。"
     )
 
+    render_tab_style()
+    st.caption("タブを選択して表示セクションを切り替えてください。")
     tab_main, tab_about, tab_sources, tab_manual, tab_limits, tab_readme = st.tabs(
-        ["MAIN", "ABOUT", "DATA SOURCES", "MANUAL", "LIMITATIONS", "README"]
+        ["🏠 メイン", "ℹ️ 概要", "🧾 データ出典", "🛠️ 使い方", "⚠️ 制約", "📘 README"]
     )
 
     with tab_main:
