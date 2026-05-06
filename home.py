@@ -14,10 +14,10 @@ import streamlit as st
 
 
 BASE_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.2.2-earthquake-20260505"
+APP_VERSION = "0.2.3-earthquake-20260506"
 
 URLS = {
-    "lab": "https://envgeo.h.kyoto-u.ac.jp/sw_jpn/",
+    "lab": "https://envgeo.h.kyoto-u.ac.jp/simple-earthquake-hypocenter-visualization/",
     "contact": "https://www.h.kyoto-u.ac.jp/en_f/faculty_f/ishimura_toyoho_4dea/#mailform",
     "usgs_api": "https://earthquake.usgs.gov/fdsnws/event/1/",
     "usgs_comcat": "https://www.fdsn.org/datacenters/detail/USGS/",
@@ -40,11 +40,13 @@ st.set_page_config(
     page_title="EnvGeo-Earthquake",
     initial_sidebar_state="auto",
     menu_items={
-        "Get Help": URLS["usgs_api"],
+        "Get Help": URLS["lab"],
         "Report a bug": URLS["contact"],
         "About": (
             "EnvGeo-Earthquake: a simple research/education earthquake "
             "visualization app based on EnvGeo-Seawater."
+            "https://envgeo.h.kyoto-u.ac.jp"
+            " / (Toyoho Ishimura@Kyoto-Univ. 2026) "
         ),
     },
 )
