@@ -959,7 +959,7 @@ def display_earthquake_table(df_eq):
 
 
 def main():
-    st.header(f"EnvGeo-Earthquake")
+    st.title(f"EnvGeo-Earthquake")
     st.header(f"4D Visualizer Earthquake ({version})")
     st.caption("Source: USGS Earthquake Catalog. Data may be preliminary and updated.")
     st.caption("震源データ: USGS Earthquake Catalog。速報値を含み、更新される場合があります。")
