@@ -1,0 +1,2379 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+USGS earthquake hypocenter 4D visualizer for EnvGeo.
+Created on Sun May 1 2026
+Created from 04_4D_Visualizer.py and simplified as an earthquake-only page.
+@author: Toyoho Ishimura @Kyoto-U
+"""
+
+import math
+import json
+from datetime import datetime, time, timedelta, timezone
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+
+import envgeo_utils
+
+
+version = "0.2.3-ja" #2026/05/06
+
+st.set_page_config(
+    page_title="EnvGeo-Earthquake",
+    initial_sidebar_state="auto",
+    menu_items={
+        "Get Help": "https://envgeo.h.kyoto-u.ac.jp/simple-earthquake-hypocenter-visualization/",
+        "Report a bug": "https://www.h.kyoto-u.ac.jp/en_f/faculty_f/ishimura_toyoho_4dea/#mailform",
+        "About": (
+            "EnvGeo-Earthquake: EnvGeo-Seawater をもとにした、"
+            "研究・教育向けの簡易地震可視化アプリです。"
+            " / (Toyoho Ishimura@Kyoto-Univ. 2026) "
+        ),
+    },
+)
+
+
+JAPAN_REGION_LABEL = "日本周辺"
+GLOBAL_REGION_LABEL = "全世界"
+INDONESIA_REGION_LABEL = "インドネシア周辺（スンダ弧）"
+NEW_ZEALAND_REGION_LABEL = "ニュージーランド周辺（ケルマデック〜トンガ）"
+CHILE_REGION_LABEL = "チリ沖（ペルー・チリ海溝）"
+ALEUTIAN_REGION_LABEL = "アリューシャン（北太平洋）"
+ANTARCTIC_REGION_LABEL = "南極周縁（スコシア〜南サンドイッチ）"
+CALIFORNIA_MEXICO_REGION_LABEL = "カリフォルニア〜メキシコ西岸"
+KAMCHATKA_REGION_LABEL = "カムチャッカ〜千島列島"
+NORTH_PACIFIC_WIDE_REGION_LABEL = "北太平洋広域（日本〜千島〜アリューシャン〜カリフォルニア沖）"
+MEDITERRANEAN_REGION_LABEL = "地中海〜アナトリア"
+HIMALAYA_REGION_LABEL = "ヒマラヤ〜ヒンドゥークシュ"
+PHILIPPINES_REGION_LABEL = "フィリピン〜台湾"
+HOTSPOT_NONE_LABEL = "（なし）"
+HOTSPOT_REGION_LABELS = [
+    INDONESIA_REGION_LABEL,
+    NEW_ZEALAND_REGION_LABEL,
+    CHILE_REGION_LABEL,
+    ALEUTIAN_REGION_LABEL,
+    ANTARCTIC_REGION_LABEL,
+    CALIFORNIA_MEXICO_REGION_LABEL,
+    KAMCHATKA_REGION_LABEL,
+    NORTH_PACIFIC_WIDE_REGION_LABEL,
+    MEDITERRANEAN_REGION_LABEL,
+    HIMALAYA_REGION_LABEL,
+    PHILIPPINES_REGION_LABEL,
+]
+REGION_BOUNDS = {
+    JAPAN_REGION_LABEL: (120.0, 155.0, 20.0, 50.0),
+    GLOBAL_REGION_LABEL: (-180.0, 180.0, -90.0, 90.0),
+    INDONESIA_REGION_LABEL: (92.0, 142.0, -14.0, 11.0),
+    NEW_ZEALAND_REGION_LABEL: (165.0, 185.5, -52.0, -10.0),
+    CHILE_REGION_LABEL: (-80.0, -65.0, -48.0, -12.0),
+    ALEUTIAN_REGION_LABEL: (-180.0, -140.0, 45.0, 62.0),
+    ANTARCTIC_REGION_LABEL: (-75.0, -10.0, -70.0, -48.0),
+    CALIFORNIA_MEXICO_REGION_LABEL: (-130.0, -102.0, 14.0, 42.0),
+    KAMCHATKA_REGION_LABEL: (145.0, 170.0, 42.0, 62.0),
+    NORTH_PACIFIC_WIDE_REGION_LABEL: (130.0, 255.0, 20.0, 65.0),
+    MEDITERRANEAN_REGION_LABEL: (15.0, 45.0, 30.0, 43.0),
+    HIMALAYA_REGION_LABEL: (65.0, 100.0, 20.0, 40.0),
+    PHILIPPINES_REGION_LABEL: (117.0, 132.0, 5.0, 28.0),
+}
+USGS_PLATE_BOUNDARY_SERVICE = (
+    "https://earthquake.usgs.gov/arcgis/rest/services/eq/map_plateboundaries/MapServer"
+)
+USGS_EVENT_API_URL = "https://earthquake.usgs.gov/fdsnws/event/1/"
+USGS_COMCAT_FDSN_URL = "https://www.fdsn.org/datacenters/detail/USGS/"
+USGS_CREDIT_URL = "https://www.usgs.gov/information-policies-and-instructions/copyrights-and-credits"
+PLATE_LAYER_IDS = {
+    1: "Plates",
+    0: "Microplates",
+}
+PLATE_BOUNDARY_COLORS = {
+    "Convergent Boundary": "#b30000",
+    "Divergent Boundary": "#006d9c",
+    "Transform Boundary": "#6a3d9a",
+    "Other": "#4d4d4d",
+    "Approximate": "#7f7f7f",
+}
+JMA_BULLETIN_URL = "https://www.data.jma.go.jp/eqev/data/bulletin/index_e.html"
+JMA_EARTHQUAKE_INFO_URL = "https://www.data.jma.go.jp/eqev/data/en/guide/earthinfo.html"
+NIED_HINET_DATA_URL = "https://www.hinet.bosai.go.jp/about_data/?LANG=en"
+PLATE_BOUNDARY_NOTE_JA = (
+    "プレート境界は USGS Tectonic Plate Boundaries service を使用しています。"
+    "USGSサービスのメタデータに基づき、主な出典には Bird (2003) および DeMets et al. (2010) が含まれます。"
+    "境界位置は概略であり、教育・研究用の可視化を目的としたもので、"
+    "公式なハザード評価や防災判断には使用しないでください。"
+)
+PLATE_BOUNDARY_FALLBACK_NOTE_JA = (
+    "USGSのプレート境界データにアクセスできない場合に表示される日本周辺の境界線は、"
+    "概略的な模式線です。"
+)
+
+
+def expanded_float_bounds(series, default_min, default_max, pad=1.0):
+    """
+    Return stable slider bounds even when the data are empty or have one value.
+    """
+    values = pd.to_numeric(series, errors="coerce").dropna()
+    if values.empty:
+        return float(default_min), float(default_max)
+
+    min_value = float(values.min())
+    max_value = float(values.max())
+    if min_value == max_value:
+        min_value -= pad
+        max_value += pad
+
+    return min_value, max_value
+
+
+def earthquake_color_scale(color_column):
+    """
+    Color scales for hypocenter depth and magnitude.
+    """
+    if color_column == "Depth_km":
+        return [
+            [0.0, "red"],
+            [0.08, "orange"],
+            [0.18, "yellow"],
+            [0.35, "lightgreen"],
+            [0.55, "lightblue"],
+            [0.75, "blue"],
+            [1.0, "darkblue"],
+        ]
+
+    return ["green", "yellow", "orange", "red", "darkred"]
+
+
+def fallback_japan_plate_boundary_features():
+    """
+    Minimal Japan-area fallback lines used only when the USGS plate service is unavailable.
+    """
+    fallback_lines = [
+        (
+            "Japan Trench (approx.)",
+            "Approximate",
+            [(143.7, 34.0), (143.5, 36.0), (144.2, 38.5), (145.2, 40.5), (146.5, 42.8)],
+        ),
+        (
+            "Kuril Trench (approx.)",
+            "Approximate",
+            [(146.5, 42.8), (148.5, 44.0), (151.0, 45.5), (154.0, 47.0)],
+        ),
+        (
+            "Izu-Bonin Trench (approx.)",
+            "Approximate",
+            [(142.0, 24.0), (142.5, 27.0), (143.0, 30.0), (143.5, 33.5)],
+        ),
+        (
+            "Nankai Trough (approx.)",
+            "Approximate",
+            [(131.0, 31.0), (133.0, 32.0), (136.0, 33.0), (139.0, 34.5)],
+        ),
+        (
+            "Ryukyu Trench (approx.)",
+            "Approximate",
+            [(122.0, 23.5), (125.0, 25.0), (128.0, 27.0), (131.0, 29.0)],
+        ),
+        (
+            "Sagami Trough (approx.)",
+            "Approximate",
+            [(138.7, 34.0), (139.5, 34.6), (140.5, 35.0), (141.2, 35.2)],
+        ),
+    ]
+
+    features = []
+    for name, label, coordinates in fallback_lines:
+        features.append(
+            {
+                "type": "Feature",
+                "properties": {"NAME": name, "LABEL": label, "Layer": "Approximate Japan"},
+                "geometry": {"type": "LineString", "coordinates": coordinates},
+            }
+        )
+    return features
+
+
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_usgs_plate_boundary_features(include_microplates):
+    """
+    Fetch USGS tectonic plate boundary GeoJSON features from the ArcGIS REST service.
+    """
+    layer_ids = [1]
+    if include_microplates:
+        layer_ids.append(0)
+
+    features = []
+    errors = []
+    for layer_id in layer_ids:
+        offset = 0
+        page_size = 1000
+        while True:
+            params = {
+                "where": "1=1",
+                "outFields": "NAME,LABEL",
+                "returnGeometry": "true",
+                "outSR": 4326,
+                "f": "geojson",
+                "resultOffset": offset,
+                "resultRecordCount": page_size,
+            }
+            query_url = f"{USGS_PLATE_BOUNDARY_SERVICE}/{layer_id}/query?{urlencode(params)}"
+            request = Request(
+                query_url,
+                headers={"User-Agent": "EnvGeo-Earthquake visualizer"},
+            )
+            try:
+                with urlopen(request, timeout=30) as response:
+                    payload = json.load(response)
+            except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as e:
+                errors.append(f"{PLATE_LAYER_IDS[layer_id]}: {e}")
+                break
+
+            page_features = payload.get("features", []) if isinstance(payload, dict) else []
+            for feature in page_features:
+                feature.setdefault("properties", {})
+                feature["properties"]["Layer"] = PLATE_LAYER_IDS[layer_id]
+            features.extend(page_features)
+
+            if len(page_features) < page_size:
+                break
+            offset += page_size
+            if offset >= 10000:
+                break
+
+    return features, errors
+
+
+def iter_line_coordinates(geometry):
+    """
+    Yield LineString coordinate arrays from GeoJSON LineString/MultiLineString geometry.
+    """
+    if not geometry:
+        return
+
+    geom_type = geometry.get("type")
+    coordinates = geometry.get("coordinates") or []
+    if geom_type == "LineString":
+        yield coordinates
+    elif geom_type == "MultiLineString":
+        for line in coordinates:
+            yield line
+
+
+def coordinate_in_query_window(lon, lat, query, buffer_degrees=4.0):
+    """
+    Keep plate boundary vertices close to the selected plotting window.
+    """
+    lon_span = query["lon_max"] - query["lon_min"]
+    lat_span = query["lat_max"] - query["lat_min"]
+    if lon_span >= 350 and lat_span >= 170:
+        return True
+
+    return (
+        query["lon_min"] - buffer_degrees <= lon <= query["lon_max"] + buffer_degrees
+        and query["lat_min"] - buffer_degrees <= lat <= query["lat_max"] + buffer_degrees
+    )
+
+
+def plate_features_to_dataframe(features, query):
+    """
+    Convert plate boundary GeoJSON features into a Plotly-friendly dataframe.
+    """
+    rows = []
+    segment_id = 0
+    for feature in features:
+        properties = feature.get("properties") or {}
+        name = properties.get("NAME") or "Plate boundary"
+        label = properties.get("LABEL") or "Other"
+        layer = properties.get("Layer") or "Plates"
+
+        for line in iter_line_coordinates(feature.get("geometry") or {}):
+            previous_lon = None
+            has_points = False
+            for coord in line:
+                if len(coord) < 2:
+                    continue
+                lon, lat = float(coord[0]), float(coord[1])
+                crosses_dateline = previous_lon is not None and abs(lon - previous_lon) > 180
+                in_window = coordinate_in_query_window(lon, lat, query)
+
+                if crosses_dateline or not in_window:
+                    if has_points:
+                        rows.append(
+                            {
+                                "Longitude_degE": None,
+                                "Latitude_degN": None,
+                                "Name": name,
+                                "Label": label,
+                                "Layer": layer,
+                                "SegmentID": segment_id,
+                            }
+                        )
+                        segment_id += 1
+                        has_points = False
+
+                if in_window:
+                    rows.append(
+                        {
+                            "Longitude_degE": lon,
+                            "Latitude_degN": lat,
+                            "Name": name,
+                            "Label": label,
+                            "Layer": layer,
+                            "SegmentID": segment_id,
+                        }
+                    )
+                    has_points = True
+                previous_lon = lon
+
+            if has_points:
+                rows.append(
+                    {
+                        "Longitude_degE": None,
+                        "Latitude_degN": None,
+                        "Name": name,
+                        "Label": label,
+                        "Layer": layer,
+                        "SegmentID": segment_id,
+                    }
+                )
+                segment_id += 1
+
+    return pd.DataFrame(rows)
+
+
+def load_plate_boundary_dataframe(query, include_microplates):
+    """
+    Load plate boundaries, filtered to the current map extent.
+    """
+    features, errors = fetch_usgs_plate_boundary_features(include_microplates)
+    source_label = "USGS Tectonic Plate Boundaries"
+    if errors and not features and query["region_preset"] == JAPAN_REGION_LABEL:
+        features = fallback_japan_plate_boundary_features()
+        source_label = "Approximate Japan plate-boundary fallback"
+
+    if not features:
+        return pd.DataFrame(), source_label, errors
+
+    return plate_features_to_dataframe(features, query), source_label, errors
+
+
+def plate_boundary_trace_style(label):
+    """
+    Return the map color/width for a plate boundary class.
+    """
+    color = PLATE_BOUNDARY_COLORS.get(label, PLATE_BOUNDARY_COLORS["Other"])
+    width = 2.8 if label in ["Convergent Boundary", "Approximate"] else 2.0
+    return color, width
+
+
+def render_plate_boundary_note():
+    """
+    Display concise plate-boundary source and use notes.
+    """
+    st.write(PLATE_BOUNDARY_NOTE_JA)
+    st.write(PLATE_BOUNDARY_FALLBACK_NOTE_JA)
+    st.markdown(f"[USGS Tectonic Plate Boundaries サービス]({USGS_PLATE_BOUNDARY_SERVICE})")
+    st.markdown("- 参照: Bird (2003) https://doi.org/10.1029/2001GC000252")
+    st.markdown("- 参照: DeMets et al. (2010) https://doi.org/10.1111/j.1365-246X.2009.04491.x")
+
+
+def build_datetime_range(date_range, start_clock, end_clock):
+    """
+    Build UTC datetime objects from Streamlit date/time widgets.
+    """
+    if not isinstance(date_range, (tuple, list)) or len(date_range) != 2:
+        return None, None
+
+    start_date, end_date = date_range
+    start_dt = datetime.combine(start_date, start_clock, tzinfo=timezone.utc)
+    end_dt = datetime.combine(end_date, end_clock, tzinfo=timezone.utc)
+    return start_dt, end_dt
+
+
+def auto_map_view(df, lon_center_hint=None):
+    """
+    Compute a map center and zoom from the selected earthquake distribution.
+    """
+    lat_values = pd.to_numeric(df["Latitude_degN"], errors="coerce").dropna()
+    lon_values = pd.to_numeric(df["Longitude_degE"], errors="coerce").dropna()
+    if lat_values.empty or lon_values.empty:
+        return 0.0, 0.0, 1.0
+
+    lat_min, lat_max = lat_values.min(), lat_values.max()
+    if lon_center_hint is not None:
+        lon_values = wrap_longitudes_to_central_meridian(lon_values, float(lon_center_hint))
+    lon_min, lon_max = lon_values.min(), lon_values.max()
+
+    center_lat = (lat_min + lat_max) / 2
+    center_lon = (lon_min + lon_max) / 2
+    lat_diff = max(lat_max - lat_min, 0.1)
+    lon_diff = max(lon_max - lon_min, 0.1)
+
+    map_width_px, map_height_px = 1200, 700
+    zoom_lon = math.log2((map_width_px * 360) / (lon_diff * 256))
+    zoom_lat = math.log2((map_height_px * 180) / (lat_diff * 256))
+    auto_zoom = max(1, min(15, min(zoom_lon, zoom_lat) - 2.0))
+
+    if lon_diff > 220:
+        center_lat, center_lon, auto_zoom = 0.0, 0.0, 1.0
+
+    center_lon = ((float(center_lon) + 180.0) % 360.0) - 180.0
+    return center_lat, center_lon, auto_zoom
+
+
+def wrap_longitudes_to_central_meridian(longitudes, central_meridian):
+    """
+    Wrap longitudes to [central_meridian-180, central_meridian+180).
+    """
+    lon_values = pd.to_numeric(pd.Series(longitudes), errors="coerce")
+    return ((lon_values - central_meridian + 180.0) % 360.0) - 180.0 + central_meridian
+
+
+def wrap_line_with_breaks(longitudes, latitudes, central_meridian, jump_threshold=180.0):
+    """
+    Wrap a line to the selected central meridian and insert NaN breaks at big jumps.
+    """
+    lon_wrapped = wrap_longitudes_to_central_meridian(longitudes, central_meridian).tolist()
+    lat_values = pd.to_numeric(pd.Series(latitudes), errors="coerce").tolist()
+    if not lon_wrapped:
+        return [], []
+
+    line_lon = [lon_wrapped[0]]
+    line_lat = [lat_values[0]]
+    for i in range(1, len(lon_wrapped)):
+        prev_lon, curr_lon = lon_wrapped[i - 1], lon_wrapped[i]
+        prev_lat, curr_lat = lat_values[i - 1], lat_values[i]
+        if (
+            pd.isna(prev_lon)
+            or pd.isna(curr_lon)
+            or pd.isna(prev_lat)
+            or pd.isna(curr_lat)
+            or abs(curr_lon - prev_lon) > jump_threshold
+        ):
+            line_lon.append(float("nan"))
+            line_lat.append(float("nan"))
+        line_lon.append(curr_lon)
+        line_lat.append(curr_lat)
+
+    return line_lon, line_lat
+
+
+def lonlat_to_local_km(longitudes, latitudes, center_lon, center_lat, central_meridian=None):
+    """
+    Convert lon/lat coordinates to local equirectangular kilometers.
+    """
+    lon_values = pd.to_numeric(pd.Series(longitudes), errors="coerce")
+    lat_values = pd.to_numeric(pd.Series(latitudes), errors="coerce")
+    if central_meridian is not None:
+        lon_values = wrap_longitudes_to_central_meridian(lon_values, central_meridian)
+
+    km_per_lat_degree = 110.574
+    km_per_lon_degree = 111.320 * math.cos(math.radians(center_lat))
+    if abs(km_per_lon_degree) < 0.001:
+        km_per_lon_degree = 0.001
+
+    east_km = (lon_values - center_lon) * km_per_lon_degree
+    north_km = (lat_values - center_lat) * km_per_lat_degree
+    return east_km, north_km
+
+
+def add_local_km_coordinates(df, query, pacific_centered=False):
+    """
+    Add local kilometer coordinates for 3D plots with correct horizontal scale.
+    """
+    df_km = df.copy()
+    use_pacific_center = pacific_centered and query.get("region_preset") == GLOBAL_REGION_LABEL
+    crosses_dateline = query["lon_min"] < -180.0 or query["lon_max"] > 180.0
+    center_lon = 180.0 if use_pacific_center else (query["lon_min"] + query["lon_max"]) / 2
+    center_lat = (query["lat_min"] + query["lat_max"]) / 2
+    central_meridian = center_lon if (use_pacific_center or crosses_dateline) else None
+
+    east_km, north_km = lonlat_to_local_km(
+        df_km["Longitude_degE"],
+        df_km["Latitude_degN"],
+        center_lon,
+        center_lat,
+        central_meridian=central_meridian,
+    )
+    df_km["East_km"] = east_km
+    df_km["North_km"] = north_km
+    return df_km, center_lon, center_lat, use_pacific_center
+
+
+def selected_area_km_ranges(
+    query,
+    center_lon,
+    center_lat,
+    z_min,
+    z_max,
+    pacific_centered=False,
+    z_aspect_scale=0.5,
+):
+    """
+    Convert the selected lon/lat/depth box into km ranges and aspect ratios.
+    """
+    is_global = query.get("region_preset") == GLOBAL_REGION_LABEL
+    crosses_dateline = query["lon_min"] < -180.0 or query["lon_max"] > 180.0
+    if pacific_centered and is_global:
+        km_per_lat_degree = 110.574
+        km_per_lon_degree = 111.320 * math.cos(math.radians(center_lat))
+        km_per_lon_degree = max(abs(km_per_lon_degree), 0.001)
+        x_half_span = 180.0 * km_per_lon_degree
+        y_min = (query["lat_min"] - center_lat) * km_per_lat_degree
+        y_max = (query["lat_max"] - center_lat) * km_per_lat_degree
+        x_range = [-x_half_span, x_half_span]
+        y_range = [min(float(y_min), float(y_max)), max(float(y_min), float(y_max))]
+    else:
+        central_meridian = center_lon if crosses_dateline else None
+        x_bounds, _ = lonlat_to_local_km(
+            [query["lon_min"], query["lon_max"]],
+            [center_lat, center_lat],
+            center_lon,
+            center_lat,
+            central_meridian=central_meridian,
+        )
+        _, y_bounds = lonlat_to_local_km(
+            [center_lon, center_lon],
+            [query["lat_min"], query["lat_max"]],
+            center_lon,
+            center_lat,
+        )
+        x_range = sorted([float(x_bounds.iloc[0]), float(x_bounds.iloc[1])])
+        y_range = sorted([float(y_bounds.iloc[0]), float(y_bounds.iloc[1])])
+
+    z_range = [float(z_max), float(z_min)]
+
+    x_span = max(abs(x_range[1] - x_range[0]), 1.0)
+    y_span = max(abs(y_range[1] - y_range[0]), 1.0)
+    z_span = max(abs(z_max - z_min), 1.0)
+    max_span = max(x_span, y_span, z_span)
+    horizontal_aspect = max(x_span, y_span) / max_span
+
+    return (
+        x_range,
+        y_range,
+        z_range,
+        dict(
+            x=x_span / max_span,
+            y=y_span / max_span,
+            z=horizontal_aspect * max(float(z_aspect_scale), 0.05),
+        ),
+    )
+
+
+def default_cross_section_points(query):
+    """
+    Provide default section endpoints.
+
+    Default: Start = 130E, 41N; End = 150E, 37N.
+    """
+    return 130.0, 41.0, 150.0, 37.0
+
+
+def add_cross_section_coordinates(df_plot, start_lon, start_lat, end_lon, end_lat):
+    """
+    Project hypocenters onto an arbitrary section line in local km coordinates.
+    """
+    center_lon = (start_lon + end_lon) / 2
+    center_lat = (start_lat + end_lat) / 2
+    df_section = df_plot.copy()
+    east_km, north_km = lonlat_to_local_km(
+        df_section["Longitude_degE"],
+        df_section["Latitude_degN"],
+        center_lon,
+        center_lat,
+    )
+
+    endpoint_east, endpoint_north = lonlat_to_local_km(
+        [start_lon, end_lon],
+        [start_lat, end_lat],
+        center_lon,
+        center_lat,
+    )
+    start_x, end_x = float(endpoint_east.iloc[0]), float(endpoint_east.iloc[1])
+    start_y, end_y = float(endpoint_north.iloc[0]), float(endpoint_north.iloc[1])
+
+    dx = end_x - start_x
+    dy = end_y - start_y
+    length_km = math.hypot(dx, dy)
+    if length_km < 1.0:
+        return df_section.iloc[0:0].copy(), 0.0
+
+    df_section["SectionDistance_km"] = ((east_km - start_x) * dx + (north_km - start_y) * dy) / length_km
+    df_section["SectionOffset_km"] = ((east_km - start_x) * (-dy) + (north_km - start_y) * dx) / length_km
+    return df_section, length_km
+
+
+def local_km_to_lonlat(east_km, north_km, center_lon, center_lat):
+    """
+    Convert local equirectangular kilometers back to lon/lat coordinates.
+    """
+    east_values = pd.to_numeric(pd.Series(east_km), errors="coerce")
+    north_values = pd.to_numeric(pd.Series(north_km), errors="coerce")
+
+    km_per_lat_degree = 110.574
+    km_per_lon_degree = 111.320 * math.cos(math.radians(center_lat))
+    if abs(km_per_lon_degree) < 0.001:
+        km_per_lon_degree = 0.001
+
+    lon_values = center_lon + east_values / km_per_lon_degree
+    lat_values = center_lat + north_values / km_per_lat_degree
+    return lon_values, lat_values
+
+
+def cross_section_corridor_dataframe(start_lon, start_lat, end_lon, end_lat, half_width_km):
+    """
+    Build a lon/lat polygon showing the selected cross-section swath.
+    """
+    center_lon = (start_lon + end_lon) / 2
+    center_lat = (start_lat + end_lat) / 2
+    endpoint_east, endpoint_north = lonlat_to_local_km(
+        [start_lon, end_lon],
+        [start_lat, end_lat],
+        center_lon,
+        center_lat,
+    )
+    start_x, end_x = float(endpoint_east.iloc[0]), float(endpoint_east.iloc[1])
+    start_y, end_y = float(endpoint_north.iloc[0]), float(endpoint_north.iloc[1])
+    dx = end_x - start_x
+    dy = end_y - start_y
+    length_km = math.hypot(dx, dy)
+    if length_km < 1.0:
+        return pd.DataFrame()
+
+    normal_x = -dy / length_km
+    normal_y = dx / length_km
+    polygon_east = [
+        start_x + normal_x * half_width_km,
+        end_x + normal_x * half_width_km,
+        end_x - normal_x * half_width_km,
+        start_x - normal_x * half_width_km,
+        start_x + normal_x * half_width_km,
+    ]
+    polygon_north = [
+        start_y + normal_y * half_width_km,
+        end_y + normal_y * half_width_km,
+        end_y - normal_y * half_width_km,
+        start_y - normal_y * half_width_km,
+        start_y + normal_y * half_width_km,
+    ]
+    polygon_lon, polygon_lat = local_km_to_lonlat(
+        polygon_east,
+        polygon_north,
+        center_lon,
+        center_lat,
+    )
+    return pd.DataFrame(
+        {
+            "Longitude_degE": polygon_lon,
+            "Latitude_degN": polygon_lat,
+        }
+    )
+
+
+def depth_profile_dataframe(df_plot, bin_size_km):
+    """
+    Build a simple depth-frequency profile.
+    """
+    df_depth = df_plot.dropna(subset=["Depth_km"]).copy()
+    if df_depth.empty:
+        return pd.DataFrame()
+
+    df_depth["DepthBinTop_km"] = (df_depth["Depth_km"] // bin_size_km) * bin_size_km
+    grouped = (
+        df_depth.groupby("DepthBinTop_km", as_index=False)
+        .agg(
+            Count=("Depth_km", "size"),
+            MeanMagnitude=("Magnitude", "mean"),
+            MaxMagnitude=("Magnitude", "max"),
+        )
+        .sort_values("DepthBinTop_km")
+    )
+    grouped["DepthMid_km"] = grouped["DepthBinTop_km"] + bin_size_km / 2
+    return grouped
+
+
+def apply_region_bounds_to_session(region_label):
+    """
+    Reset lon/lat slider state to the selected preset bounds.
+    """
+    if region_label not in REGION_BOUNDS:
+        return
+    lon_min, lon_max, lat_min, lat_max = REGION_BOUNDS[region_label]
+    st.session_state[f"eq_lon_range_{region_label}"] = (float(lon_min), float(lon_max))
+    st.session_state[f"eq_lat_range_{region_label}"] = (float(lat_min), float(lat_max))
+
+
+def set_region_japan():
+    """
+    Keep the main-page region checkboxes mutually exclusive.
+    """
+    if st.session_state.eq_region_japan:
+        st.session_state.eq_region_global = False
+        st.session_state.eq_region_hotspot = HOTSPOT_NONE_LABEL
+        st.session_state.eq_region_choice = JAPAN_REGION_LABEL
+        apply_region_bounds_to_session(JAPAN_REGION_LABEL)
+    elif not st.session_state.eq_region_global:
+        st.session_state.eq_region_japan = True
+        st.session_state.eq_region_hotspot = HOTSPOT_NONE_LABEL
+        st.session_state.eq_region_choice = JAPAN_REGION_LABEL
+        apply_region_bounds_to_session(JAPAN_REGION_LABEL)
+
+
+def set_region_global():
+    """
+    Keep the main-page region checkboxes mutually exclusive.
+    """
+    if st.session_state.eq_region_global:
+        st.session_state.eq_region_japan = False
+        st.session_state.eq_region_hotspot = HOTSPOT_NONE_LABEL
+        st.session_state.eq_region_choice = GLOBAL_REGION_LABEL
+        apply_region_bounds_to_session(GLOBAL_REGION_LABEL)
+    elif not st.session_state.eq_region_japan:
+        st.session_state.eq_region_global = True
+        st.session_state.eq_region_hotspot = HOTSPOT_NONE_LABEL
+        st.session_state.eq_region_choice = GLOBAL_REGION_LABEL
+        apply_region_bounds_to_session(GLOBAL_REGION_LABEL)
+
+
+def set_region_hotspot():
+    """
+    Apply additional hotspot presets from the main page.
+    """
+    hotspot_choice = st.session_state.get("eq_region_hotspot", HOTSPOT_NONE_LABEL)
+    if hotspot_choice in HOTSPOT_REGION_LABELS:
+        st.session_state.eq_region_japan = False
+        st.session_state.eq_region_global = False
+        st.session_state.eq_region_choice = hotspot_choice
+        apply_region_bounds_to_session(hotspot_choice)
+        return
+
+    if st.session_state.get("eq_region_global", False):
+        st.session_state.eq_region_choice = GLOBAL_REGION_LABEL
+    elif st.session_state.get("eq_region_japan", False):
+        st.session_state.eq_region_choice = JAPAN_REGION_LABEL
+    else:
+        st.session_state.eq_region_japan = True
+        st.session_state.eq_region_choice = JAPAN_REGION_LABEL
+    if st.session_state.eq_region_choice in REGION_BOUNDS:
+        apply_region_bounds_to_session(st.session_state.eq_region_choice)
+    st.session_state.eq_region_hotspot = HOTSPOT_NONE_LABEL
+
+
+def main_region_selector():
+    """
+    Select Japan-area or global API bounds from the main page.
+    """
+    if "eq_region_choice" not in st.session_state:
+        st.session_state.eq_region_choice = JAPAN_REGION_LABEL
+    if "eq_region_japan" not in st.session_state:
+        st.session_state.eq_region_japan = True
+    if "eq_region_global" not in st.session_state:
+        st.session_state.eq_region_global = False
+    if "eq_region_hotspot" not in st.session_state:
+        if st.session_state.eq_region_choice in HOTSPOT_REGION_LABELS:
+            st.session_state.eq_region_hotspot = st.session_state.eq_region_choice
+        else:
+            st.session_state.eq_region_hotspot = HOTSPOT_NONE_LABEL
+
+    current_choice = st.session_state.eq_region_choice
+    if current_choice == JAPAN_REGION_LABEL:
+        st.session_state.eq_region_japan = True
+        st.session_state.eq_region_global = False
+        st.session_state.eq_region_hotspot = HOTSPOT_NONE_LABEL
+    elif current_choice == GLOBAL_REGION_LABEL:
+        st.session_state.eq_region_japan = False
+        st.session_state.eq_region_global = True
+        st.session_state.eq_region_hotspot = HOTSPOT_NONE_LABEL
+    elif current_choice in HOTSPOT_REGION_LABELS:
+        st.session_state.eq_region_japan = False
+        st.session_state.eq_region_global = False
+        st.session_state.eq_region_hotspot = current_choice
+
+    st.subheader("表示地域")
+    col_japan, col_global = st.columns(2)
+    with col_japan:
+        st.checkbox(
+            JAPAN_REGION_LABEL,
+            key="eq_region_japan",
+            on_change=set_region_japan,
+        )
+    with col_global:
+        st.checkbox(
+            GLOBAL_REGION_LABEL,
+            key="eq_region_global",
+            on_change=set_region_global,
+        )
+
+    st.selectbox(
+        "主要な地震多発域プリセット",
+        [HOTSPOT_NONE_LABEL] + HOTSPOT_REGION_LABELS,
+        key="eq_region_hotspot",
+        on_change=set_region_hotspot,
+    )
+
+    hotspot_choice = st.session_state.get("eq_region_hotspot", HOTSPOT_NONE_LABEL)
+    if hotspot_choice in HOTSPOT_REGION_LABELS:
+        st.caption(f"選択中の地震多発域: {hotspot_choice}")
+        st.session_state.eq_region_choice = hotspot_choice
+        return hotspot_choice
+
+    if st.session_state.eq_region_global:
+        return GLOBAL_REGION_LABEL
+    return JAPAN_REGION_LABEL
+
+
+def sidebar_controls(region_preset):
+    """
+    Sidebar controls for USGS API query parameters.
+    """
+    now_utc = datetime.now(timezone.utc)
+    default_end_date = now_utc.date()
+    default_start_date = default_end_date - timedelta(days=30)
+
+    default_lon_min, default_lon_max, default_lat_min, default_lat_max = REGION_BOUNDS[region_preset]
+
+    with st.sidebar.form("earthquake_api_parameter", clear_on_submit=False):
+        st.header(":blue[--- USGS 地震カタログ API ---]")
+        date_range = st.date_input(
+            "期間（UTC）",
+            value=(default_start_date, default_end_date),
+            key="eq_date_range",
+        )
+
+        col_start, col_end = st.columns(2)
+        with col_start:
+            start_clock = st.time_input(
+                "開始時刻",
+                value=time(0, 0),
+                step=3600,
+                key="eq_start_clock",
+            )
+        with col_end:
+            end_clock = st.time_input(
+                "終了時刻",
+                value=time(23, 59),
+                step=3600,
+                key="eq_end_clock",
+            )
+
+        mag_min, mag_max = st.slider(
+            "マグニチュード",
+            min_value=0.0,
+            max_value=10.0,
+            value=(4.5, 10.0),
+            step=0.1,
+            key="eq_magnitude_range",
+        )
+
+        depth_min, depth_max = st.slider(
+            "震源深さ（km）",
+            min_value=-100.0,
+            max_value=1000.0,
+            value=(0.0, 700.0),
+            step=10.0,
+            key="eq_depth_range",
+        )
+
+        with st.expander("緯度・経度", expanded=True):
+            lon_min, lon_max = st.slider(
+                "経度",
+                min_value=-180.0,
+                max_value=360.0,
+                value=(default_lon_min, default_lon_max),
+                step=0.5,
+                key=f"eq_lon_range_{region_preset}",
+            )
+            lat_min, lat_max = st.slider(
+                "緯度",
+                min_value=-90.0,
+                max_value=90.0,
+                value=(default_lat_min, default_lat_max),
+                step=0.5,
+                key=f"eq_lat_range_{region_preset}",
+            )
+
+        orderby = st.selectbox(
+            "並び順（Order by）",
+            ["time", "time-asc", "magnitude", "magnitude-asc"],
+            index=0,
+            key="eq_orderby",
+            help=(
+                "**データの優先順位:**\n\n"
+                "- **time**: 新しい順（既定）\n"
+                "- **time-asc**: 古い順\n"
+                "- **magnitude**: 大きい順\n"
+                "- **magnitude-asc**: 小さい順\n\n"
+                "**使い方の目安:**\n\n"
+                "最近の地震を確認したい場合は **'time'**、"
+                "特定地域で大きな地震を優先して表示したい場合は **'magnitude'** を推奨します。"
+            )
+        )
+
+        limit = st.number_input(
+            "最大取得件数（Max events）",
+            min_value=1,
+            max_value=20000,
+            value=2000,
+            step=100,
+            key="eq_limit",
+        )
+
+        st.form_submit_button(":red[取得 / 更新]")
+
+    start_dt, end_dt = build_datetime_range(date_range, start_clock, end_clock)
+    if start_dt is None or end_dt is None:
+        st.warning("開始日と終了日の両方を指定してください。")
+        st.stop()
+    if start_dt > end_dt:
+        st.warning("開始日時は終了日時より前である必要があります。")
+        st.stop()
+    if lon_max <= lon_min:
+        st.warning("経度の最小値は最大値より小さく設定してください。")
+        st.stop()
+    if (lon_max - lon_min) > 360.0:
+        st.warning(
+            "経度の範囲が広すぎます。USGSの矩形検索では360°以下にしてください。"
+            "（例: -20〜340 は可、-20〜360 は不可）"
+        )
+        st.stop()
+
+    return {
+        "region_preset": region_preset,
+        "start_dt": start_dt,
+        "end_dt": end_dt,
+        "mag_min": mag_min,
+        "mag_max": mag_max,
+        "depth_min": depth_min,
+        "depth_max": depth_max,
+        "lat_min": lat_min,
+        "lat_max": lat_max,
+        "lon_min": lon_min,
+        "lon_max": lon_max,
+        "limit": int(limit),
+        "orderby": orderby,
+    }
+
+
+def fetch_earthquake_dataframe(query):
+    """
+    Fetch earthquake records from USGS with the sidebar query.
+    """
+    with st.spinner("USGS から震源データを取得しています..."):
+        try:
+            return envgeo_utils.load_usgs_earthquake_data(
+                query["start_dt"],
+                query["end_dt"],
+                minmagnitude=query["mag_min"],
+                maxmagnitude=query["mag_max"],
+                mindepth=query["depth_min"],
+                maxdepth=query["depth_max"],
+                minlatitude=query["lat_min"],
+                maxlatitude=query["lat_max"],
+                minlongitude=query["lon_min"],
+                maxlongitude=query["lon_max"],
+                limit=query["limit"],
+                orderby=query["orderby"],
+            )
+        except RuntimeError as e:
+            st.error(str(e))
+            st.stop()
+
+
+def prepare_plot_dataframe(df_eq):
+    """
+    Keep plottable hypocenter rows and define marker sizes from magnitude.
+    """
+    df_plot = df_eq.dropna(subset=["Longitude_degE", "Latitude_degN", "Depth_km"]).copy()
+    if df_plot.empty:
+        return df_plot
+
+    magnitude = pd.to_numeric(df_plot["Magnitude"], errors="coerce").fillna(0).clip(lower=0)
+    df_plot["MarkerSize"] = (magnitude + 1.0) ** 2
+    df_plot["MagnitudeMarkerSize"] = 2.0 + magnitude * 3.0
+    return df_plot
+
+
+def visualization_controls(df_plot, query):
+    """
+    Sidebar and main-panel controls for 4D rendering.
+    """
+    with st.sidebar.container(border=True):
+        st.subheader(":blue[--- 可視化設定 ---]")
+
+        depth_min_actual, depth_max_actual = expanded_float_bounds(
+            df_plot["Depth_km"], query["depth_min"], query["depth_max"], pad=10.0
+        )
+        depth_slider_min = float(math.floor(depth_min_actual / 10.0) * 10.0)
+        depth_slider_max = float(math.ceil(depth_max_actual / 10.0) * 10.0)
+        if depth_slider_min == depth_slider_max:
+            depth_slider_max += 10.0
+
+        fig_depth_min, fig_depth_max = st.slider(
+            "深さ表示範囲（km）",
+            min_value=depth_slider_min,
+            max_value=1000.0,
+            value=(depth_slider_min, depth_slider_max),
+            step=10.0,
+            key="eq_fig_depth_scale",
+        )
+
+        marker_size_scale_3d = st.slider(
+            "3Dマーカーサイズ倍率",
+            min_value=0.2,
+            max_value=3.0,
+            value=0.7,
+            step=0.1,
+            key="eq_marker_size_scale_3d",
+        )
+
+        marker_size_scale_2d = st.slider(
+            "2Dマーカーサイズ倍率",
+            min_value=0.2,
+            max_value=3.0,
+            value=0.6,
+            step=0.1,
+            key="eq_marker_size_scale_2d",
+        )
+
+        marker_size_scale_section = st.slider(
+            "断面図マーカーサイズ倍率",
+            min_value=0.2,
+            max_value=3.0,
+            value=0.6,
+            step=0.1,
+            key="eq_marker_size_scale_section",
+        )
+
+        z_aspect_scale_3d = st.slider(
+            "3D Z軸表示倍率",
+            min_value=0.1,
+            max_value=2.0,
+            value=0.5,
+            step=0.1,
+            key="eq_z_aspect_scale_3d",
+            help="小さくすると深さ方向を圧縮し、大きくすると深さ方向を強調します。",
+        )
+
+        pacific_center_3d = st.checkbox(
+            "3D太平洋中心表示（180°）",
+            value=(query.get("region_preset") == GLOBAL_REGION_LABEL),
+            disabled=(query.get("region_preset") != GLOBAL_REGION_LABEL),
+            key="eq_pacific_center_3d",
+        )
+
+        color_option = st.radio(
+            "カラーバー項目",
+            ["マグニチュード", "震源深さ"],
+            horizontal=False,
+            key="eq_color_option",
+        )
+
+        show_plate_boundaries = st.checkbox(
+            "プレート境界を重ねて表示",
+            value=True,
+            key="eq_show_plate_boundaries",
+        )
+        include_microplates = st.checkbox(
+            "マイクロプレートも含める",
+            value=(query["region_preset"] == JAPAN_REGION_LABEL),
+            disabled=not show_plate_boundaries,
+            key="eq_include_microplates",
+        )
+
+    color_column = "Depth_km" if color_option == "震源深さ" else "Magnitude"
+    color_label = "深さ（km）" if color_column == "Depth_km" else "マグニチュード"
+
+    c_min_actual, c_max_actual = expanded_float_bounds(
+        df_plot[color_column], 0.0, 1.0, pad=1.0
+    )
+    c_step = 10.0 if color_column == "Depth_km" else 0.1
+    c_slider_upper_limit = 1000.0 if color_column == "Depth_km" else 10.0
+    c_slider_min = float(math.floor(c_min_actual / c_step) * c_step)
+    c_slider_min = min(c_slider_min, c_slider_upper_limit)
+    if c_slider_min >= c_slider_upper_limit:
+        c_slider_min = max(0.0, c_slider_upper_limit - c_step)
+
+    c_default_max = float(math.ceil(c_max_actual / c_step) * c_step)
+    c_default_max = min(c_default_max, c_slider_upper_limit)
+    if c_default_max < c_slider_min:
+        c_default_max = c_slider_upper_limit
+    if c_default_max == c_slider_min:
+        c_default_max = min(c_slider_upper_limit, c_slider_min + c_step)
+
+    c_slider_max = c_slider_upper_limit
+
+    c_slider_floor = min(0.0, c_slider_min)
+
+    return {
+        "fig_depth_min": fig_depth_min,
+        "fig_depth_max": fig_depth_max,
+        "marker_size_scale_3d": marker_size_scale_3d,
+        "marker_size_scale_2d": marker_size_scale_2d,
+        "marker_size_scale_section": marker_size_scale_section,
+        "z_aspect_scale_3d": z_aspect_scale_3d,
+        "pacific_center_3d": pacific_center_3d and query.get("region_preset") == GLOBAL_REGION_LABEL,
+        "color_column": color_column,
+        "color_label": color_label,
+        "color_range_min": c_slider_floor,
+        "color_range_max": c_slider_max,
+        "color_range_step": c_step,
+        "color_range_default": (c_slider_min, c_default_max),
+        "show_plate_boundaries": show_plate_boundaries,
+        "include_microplates": include_microplates and show_plate_boundaries,
+    }
+
+
+def _colorbar_scale_key(viz, view_name):
+    return f"eq_colorbar_{view_name}_{viz['color_column']}"
+
+
+def _resolve_color_range(viz, view_name):
+    key = _colorbar_scale_key(viz, view_name)
+    default_range = tuple(viz["color_range_default"])
+    min_value = float(viz["color_range_min"])
+    max_value = float(viz["color_range_max"])
+
+    raw_value = st.session_state.get(key, default_range)
+    try:
+        low_value = float(raw_value[0])
+        high_value = float(raw_value[1])
+    except Exception:
+        low_value, high_value = default_range
+
+    low_value = min(max(low_value, min_value), max_value)
+    high_value = min(max(high_value, min_value), max_value)
+    if low_value > high_value:
+        low_value, high_value = default_range
+
+    resolved_range = (low_value, high_value)
+    st.session_state[key] = resolved_range
+    return resolved_range, key
+
+
+def render_colorbar_scale_adjustment(viz, view_name):
+    color_range, key = _resolve_color_range(viz, view_name)
+    return st.slider(
+        f"カラーバースケール調整: {viz['color_label']}",
+        min_value=float(viz["color_range_min"]),
+        max_value=float(viz["color_range_max"]),
+        value=color_range,
+        step=float(viz["color_range_step"]),
+        key=key,
+    )
+
+
+def add_plate_boundaries_to_3d(
+    fig_eq,
+    plate_boundary_df,
+    center_lon,
+    center_lat,
+    z_level,
+    central_meridian=None,
+):
+    """
+    Add plate boundary lines to a 3D hypocenter figure.
+    """
+    if plate_boundary_df is None or plate_boundary_df.empty:
+        return fig_eq
+
+    for label, df_label in plate_boundary_df.groupby("Label", dropna=False):
+        color, width = plate_boundary_trace_style(label)
+        if central_meridian is not None:
+            boundary_lon_plot, boundary_lat_plot = wrap_line_with_breaks(
+                df_label["Longitude_degE"],
+                df_label["Latitude_degN"],
+                central_meridian,
+            )
+        else:
+            boundary_lon_plot = df_label["Longitude_degE"]
+            boundary_lat_plot = df_label["Latitude_degN"]
+
+        boundary_east, boundary_north = lonlat_to_local_km(
+            boundary_lon_plot,
+            boundary_lat_plot,
+            center_lon,
+            center_lat,
+        )
+        text_values = df_label["Name"] if len(boundary_east) == len(df_label) else None
+        fig_eq.add_trace(
+            go.Scatter3d(
+                x=boundary_east,
+                y=boundary_north,
+                z=[z_level] * len(boundary_east),
+                mode="lines",
+                name=f"プレート境界: {label}",
+                line=dict(color=color, width=width),
+                text=text_values,
+                hovertemplate="%{text}<extra></extra>" if text_values is not None else None,
+            )
+        )
+
+    return fig_eq
+
+
+def render_4d_hypocenter_map(df_plot, query, viz, plate_boundary_df=None):
+    """
+    Render the EnvGeo-style 4D hypocenter map.
+    """
+    color_range, _ = _resolve_color_range(viz, "3d")
+    df_plot, center_lon, center_lat, using_pacific_center = add_local_km_coordinates(
+        df_plot,
+        query,
+        pacific_centered=viz.get("pacific_center_3d", False),
+    )
+    crosses_dateline = query["lon_min"] < -180.0 or query["lon_max"] > 180.0
+    line_central_meridian = center_lon if (using_pacific_center or crosses_dateline) else None
+
+    # Plotly 3D/WebGL marker sizes can appear much larger than 2D markers,
+    # and the apparent size can differ by browser.  Use a separate, conservative
+    # 3D marker-size column instead of Plotly Express size normalization.
+    magnitude_3d = pd.to_numeric(df_plot["Magnitude"], errors="coerce").fillna(0).clip(lower=0)
+    df_plot["MarkerSize3D"] = (1.8 + magnitude_3d * 0.8) * viz["marker_size_scale_3d"]
+    df_plot["MarkerSize3D"] = df_plot["MarkerSize3D"].clip(lower=1.5, upper=16.0)
+
+    df_plot = df_plot.sort_values(by=["Depth_km", "Magnitude"], ascending=[False, True])
+
+    x_range, y_range, z_range, aspectratio = selected_area_km_ranges(
+        query,
+        center_lon,
+        center_lat,
+        viz["fig_depth_min"],
+        viz["fig_depth_max"],
+        pacific_centered=using_pacific_center,
+        z_aspect_scale=viz["z_aspect_scale_3d"],
+    )
+
+    fig_eq = px.scatter_3d(
+        df_plot,
+        x="East_km",
+        y="North_km",
+        z="Depth_km",
+        color=viz["color_column"],
+        width=700,
+        height=620,
+        color_continuous_scale=earthquake_color_scale(viz["color_column"]),
+        hover_data={
+            "DateTime_UTC": True,
+            "Place": True,
+            "Magnitude": True,
+            "MagnitudeType": True,
+            "Depth_km": True,
+            "Longitude_degE": True,
+            "Latitude_degN": True,
+            "EventID": True,
+            "East_km": False,
+            "North_km": False,
+            "MarkerSize": False,
+            "MarkerSize3D": False,
+        },
+    )
+
+    fig_eq.update_traces(
+        mode="markers",
+        marker=dict(
+            size=df_plot["MarkerSize3D"].tolist(),
+            opacity=0.72,
+            line=dict(color="rgba(255,255,255,0.0)", width=0.0),
+        ),
+        name="USGS地震",
+    )
+
+    fig_eq.update_layout(
+        scene=dict(
+            xaxis_title="東西距離（km）",
+            yaxis_title="南北距離（km）",
+            zaxis_title="震源深さ（km）",
+            xaxis=dict(range=x_range),
+            yaxis=dict(range=y_range),
+            zaxis=dict(
+                range=z_range,
+                autorange=False,
+            ),
+            aspectmode="manual",
+            aspectratio=aspectratio,
+            camera=dict(
+                eye=dict(x=-0.8, y=-0.9, z=1.8),
+                center=dict(x=0, y=0, z=-0.1),
+            ),
+        ),
+        coloraxis_colorbar=dict(
+            title=viz["color_label"],
+            orientation="h",
+            yanchor="top",
+            y=-0.15,
+            x=0.5,
+            xanchor="center",
+            thickness=15,
+        ),
+        legend=dict(
+            x=0.01,
+            y=0.99,
+            xanchor="left",
+            yanchor="top",
+            orientation="v",
+            bgcolor="rgba(255,255,255,0.55)",
+            bordercolor="rgba(80,80,80,0.35)",
+            borderwidth=1,
+            tracegroupgap=2,
+        ),
+        margin=dict(r=20, l=10, b=110, t=10),
+    )
+    fig_eq.update_coloraxes(
+        cmin=color_range[0],
+        cmax=color_range[1],
+    )
+
+    coastline_x, coastline_y = envgeo_utils.load_coastline_data(envgeo_utils.data_source_GLOBAL)
+    if coastline_x and coastline_y:
+        if line_central_meridian is not None:
+            coastline_lon_plot, coastline_lat_plot = wrap_line_with_breaks(
+                coastline_x,
+                coastline_y,
+                line_central_meridian,
+            )
+        else:
+            coastline_lon_plot, coastline_lat_plot = coastline_x, coastline_y
+
+        coastline_east, coastline_north = lonlat_to_local_km(
+            coastline_lon_plot,
+            coastline_lat_plot,
+            center_lon,
+            center_lat,
+            central_meridian=line_central_meridian,
+        )
+        fig_eq.add_trace(
+            go.Scatter3d(
+                x=coastline_east,
+                y=coastline_north,
+                z=[viz["fig_depth_min"]] * len(coastline_east),
+                mode="lines",
+                name="海岸線（上面）",
+                line=dict(color="blue", width=0.8),
+                hoverinfo="none",
+            )
+        )
+        fig_eq.add_trace(
+            go.Scatter3d(
+                x=coastline_east,
+                y=coastline_north,
+                z=[viz["fig_depth_max"]] * len(coastline_east),
+                mode="lines",
+                name="海岸線（下面）",
+                line=dict(color="gray", width=0.5),
+                hoverinfo="none",
+            )
+        )
+
+    fig_eq = add_plate_boundaries_to_3d(
+        fig_eq,
+        plate_boundary_df,
+        center_lon,
+        center_lat,
+        viz["fig_depth_min"],
+        central_meridian=line_central_meridian,
+    )
+
+    st.plotly_chart(
+        fig_eq,
+        key="earthquake_4d_hypocenter_map",
+        config={"scrollZoom": True, "displayModeBar": True},
+        use_container_width=True,
+    )
+    render_colorbar_scale_adjustment(viz, "3d")
+
+
+def add_plate_boundaries_to_2d(fig_map, plate_boundary_df, central_meridian=None):
+    """
+    Add plate boundary lines to a 2D mapbox figure.
+    """
+    if plate_boundary_df is None or plate_boundary_df.empty:
+        return fig_map
+
+    for label, df_label in plate_boundary_df.groupby("Label", dropna=False):
+        color, width = plate_boundary_trace_style(label)
+        if central_meridian is not None:
+            boundary_lon_plot, boundary_lat_plot = wrap_line_with_breaks(
+                df_label["Longitude_degE"],
+                df_label["Latitude_degN"],
+                central_meridian,
+            )
+        else:
+            boundary_lon_plot = df_label["Longitude_degE"]
+            boundary_lat_plot = df_label["Latitude_degN"]
+
+        text_values = df_label["Name"] if len(boundary_lon_plot) == len(df_label) else None
+        fig_map.add_trace(
+            go.Scattermapbox(
+                lat=boundary_lat_plot,
+                lon=boundary_lon_plot,
+                mode="lines",
+                line=dict(color=color, width=width),
+                name=f"プレート境界: {label}",
+                text=text_values,
+                hovertemplate="%{text}<extra></extra>" if text_values is not None else None,
+            )
+        )
+
+    return fig_map
+
+
+def render_2d_distribution_map(df_plot, query, viz, plate_boundary_df=None):
+    """
+    Render the selected hypocenters on an interactive map.
+    """
+    color_range, _ = _resolve_color_range(viz, "2d")
+    st.subheader("地理分布図（自動ズーム）")
+
+    map_mode = st.radio(
+        "地図スタイル:",
+        ["標準", "衛星画像", "海底地形（海域）", "等高線（国土地理院）"],
+        horizontal=True,
+        key="eq_map_style",
+    )
+
+    lon_center_hint = None
+    if query["lon_min"] < -180.0 or query["lon_max"] > 180.0:
+        lon_center_hint = (query["lon_min"] + query["lon_max"]) / 2
+    line_central_meridian = lon_center_hint
+    center_lat, center_lon, auto_zoom = auto_map_view(df_plot, lon_center_hint=lon_center_hint)
+    df_map = df_plot.copy()
+    df_map["MagnitudeMarkerSize"] = df_map["MagnitudeMarkerSize"] * viz["marker_size_scale_2d"]
+
+    fig_map = px.scatter_mapbox(
+        df_map,
+        lat="Latitude_degN",
+        lon="Longitude_degE",
+        color=viz["color_column"],
+        color_continuous_scale=earthquake_color_scale(viz["color_column"]),
+        hover_data={
+            "DateTime_UTC": True,
+            "Place": True,
+            "Magnitude": True,
+            "Depth_km": True,
+            "EventID": True,
+            "MagnitudeMarkerSize": False,
+            "MarkerSize": False,
+        },
+        opacity=0.65,
+        height=520,
+    )
+    fig_map.update_traces(
+        marker=dict(size=df_map["MagnitudeMarkerSize"].tolist())
+    )
+    map_mode_for_style = {
+        "標準": "Standard",
+        "衛星画像": "Satellite",
+        "海底地形（海域）": "Bathymetry (Sea)",
+        "等高線（国土地理院）": "Contour (GSI)",
+    }[map_mode]
+    fig_map = envgeo_utils.apply_map_style(fig_map, map_mode_for_style)
+    fig_map.update_layout(
+        coloraxis_colorbar=dict(
+            title=viz["color_label"],
+            orientation="h",
+            yanchor="top",
+            y=-0.15,
+            x=0.5,
+            xanchor="center",
+            thickness=15,
+        ),
+        mapbox=dict(center=dict(lat=center_lat, lon=center_lon), zoom=auto_zoom),
+        margin=dict(l=0, r=0, t=0, b=100),
+        legend=dict(
+            x=0.01,
+            y=0.99,
+            xanchor="left",
+            yanchor="top",
+            orientation="v",
+            bgcolor="rgba(255,255,255,0.58)",
+            bordercolor="rgba(80,80,80,0.35)",
+            borderwidth=1,
+            font=dict(size=11),
+            tracegroupgap=2,
+        ),
+        autosize=True,
+    )
+    fig_map.update_coloraxes(
+        cmin=color_range[0],
+        cmax=color_range[1],
+    )
+    fig_map = add_plate_boundaries_to_2d(
+        fig_map,
+        plate_boundary_df,
+        central_meridian=line_central_meridian,
+    )
+
+    st.plotly_chart(
+        fig_map,
+        key="earthquake_distribution_map",
+        config={"scrollZoom": True, "displayModeBar": True},
+        use_container_width=True,
+    )
+    render_colorbar_scale_adjustment(viz, "2d")
+
+
+def render_time_histogram(df_plot):
+    """
+    Render earthquake occurrence counts through time.
+    """
+    st.subheader("時系列ヒストグラム")
+    df_time = df_plot.dropna(subset=["Time_UTC"]).copy()
+    if df_time.empty:
+        st.warning("ヒストグラムに使用できる時刻データがありません。")
+        return
+
+    nbins = st.slider(
+        "時間ビン数",
+        min_value=5,
+        max_value=100,
+        value=30,
+        step=5,
+        key="eq_time_histogram_bins",
+    )
+    fig_time = px.histogram(
+        df_time,
+        x="Time_UTC",
+        nbins=nbins,
+        hover_data={"Magnitude": True, "Depth_km": True},
+        height=420,
+    )
+    fig_time.update_traces(marker_color="#3b6ea8", marker_line_color="white", marker_line_width=0.5)
+    fig_time.update_layout(
+        xaxis_title="発震時刻（UTC）",
+        yaxis_title="地震数",
+        margin=dict(l=10, r=10, t=20, b=20),
+    )
+    st.plotly_chart(fig_time, key="earthquake_time_histogram", use_container_width=True)
+
+
+def render_cross_section_location_map(
+    df_plot,
+    df_section,
+    query,
+    viz,
+    start_lon,
+    start_lat,
+    end_lon,
+    end_lat,
+    half_width_km,
+    color_range,
+    plate_boundary_df=None,
+):
+    """
+    Show the cross-section A-B line and selected swath on a 2D map.
+    """
+    st.caption("断面位置マップ")
+
+    endpoint_df = pd.DataFrame(
+        {
+            "Label": ["A", "B"],
+            "Longitude_degE": [start_lon, end_lon],
+            "Latitude_degN": [start_lat, end_lat],
+        }
+    )
+    context_df = pd.concat(
+        [
+            df_plot[["Longitude_degE", "Latitude_degN"]].copy(),
+            endpoint_df[["Longitude_degE", "Latitude_degN"]],
+        ],
+        ignore_index=True,
+    )
+    center_lat, center_lon, auto_zoom = auto_map_view(context_df)
+
+    fig_location = go.Figure()
+    fig_location.add_trace(
+        go.Scattermapbox(
+            lat=df_plot["Latitude_degN"],
+            lon=df_plot["Longitude_degE"],
+            mode="markers",
+            name="全イベント",
+            marker=dict(size=4, color="rgba(70, 70, 70, 0.28)"),
+            hoverinfo="skip",
+        )
+    )
+
+    corridor_df = cross_section_corridor_dataframe(
+        start_lon,
+        start_lat,
+        end_lon,
+        end_lat,
+        half_width_km,
+    )
+    if not corridor_df.empty:
+        fig_location.add_trace(
+            go.Scattermapbox(
+                lat=corridor_df["Latitude_degN"],
+                lon=corridor_df["Longitude_degE"],
+                mode="lines",
+                fill="toself",
+                name="断面幅",
+                line=dict(color="rgba(30, 120, 180, 0.35)", width=1),
+                fillcolor="rgba(30, 120, 180, 0.16)",
+                hoverinfo="skip",
+            )
+        )
+
+    if not df_section.empty:
+        selected_size = (2.0 + pd.to_numeric(df_section["Magnitude"], errors="coerce").fillna(0).clip(lower=0) * 2.6)
+        fig_location.add_trace(
+            go.Scattermapbox(
+                lat=df_section["Latitude_degN"],
+                lon=df_section["Longitude_degE"],
+                mode="markers",
+                name="断面内イベント",
+                marker=dict(
+                    size=(selected_size * viz["marker_size_scale_section"]).tolist(),
+                    color=pd.to_numeric(df_section[viz["color_column"]], errors="coerce"),
+                    colorscale=earthquake_color_scale(viz["color_column"]),
+                    cmin=color_range[0],
+                    cmax=color_range[1],
+                    opacity=0.78,
+                    colorbar=dict(
+                        title=viz["color_label"],
+                        lenmode="fraction",
+                        len=0.9,
+                        yanchor="middle",
+                        y=0.45,
+                    ),
+                ),
+                text=df_section["Place"],
+                customdata=df_section[["DateTime_UTC", "Magnitude", "Depth_km", "SectionOffset_km"]],
+                hovertemplate=(
+                    "%{text}<br>"
+                    "%{customdata[0]}<br>"
+                    "M %{customdata[1]}<br>"
+                    "深さ %{customdata[2]} km<br>"
+                    "オフセット %{customdata[3]:.1f} km<extra></extra>"
+                ),
+            )
+        )
+
+    fig_location.add_trace(
+        go.Scattermapbox(
+            lat=[start_lat, end_lat],
+            lon=[start_lon, end_lon],
+            mode="lines",
+            name="断面 A-B",
+            line=dict(color="#d7301f", width=4),
+            hovertemplate="断面 A-B<extra></extra>",
+        )
+    )
+    fig_location.add_trace(
+        go.Scattermapbox(
+            lat=endpoint_df["Latitude_degN"],
+            lon=endpoint_df["Longitude_degE"],
+            mode="markers+text",
+            name="端点",
+            marker=dict(size=13, color="#d7301f"),
+            text=endpoint_df["Label"],
+            textfont=dict(color="white", size=12),
+            textposition="middle center",
+            hovertemplate="%{text}: %{lon:.2f}, %{lat:.2f}<extra></extra>",
+        )
+    )
+
+    fig_location = envgeo_utils.apply_map_style(fig_location, "Standard")
+    fig_location = add_plate_boundaries_to_2d(fig_location, plate_boundary_df)
+    fig_location.update_layout(
+        height=420,
+        mapbox=dict(center=dict(lat=center_lat, lon=center_lon), zoom=auto_zoom),
+        margin=dict(l=0, r=0, t=0, b=0),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=0.01,
+            xanchor="left",
+            x=0.01,
+            bgcolor="rgba(255,255,255,0.58)",
+            bordercolor="rgba(80,80,80,0.35)",
+            borderwidth=1,
+            font=dict(size=11),
+        ),
+    )
+    st.plotly_chart(
+        fig_location,
+        key="earthquake_cross_section_location_map",
+        config={"scrollZoom": True, "displayModeBar": True},
+        use_container_width=True,
+    )
+
+
+def render_cross_section_and_depth_profile(df_plot, query, viz, plate_boundary_df=None):
+    """
+    Render an arbitrary cross-section and a depth-frequency profile.
+    """
+    color_range, _ = _resolve_color_range(viz, "section")
+    st.subheader("任意断面図")
+    default_start_lon, default_start_lat, default_end_lon, default_end_lat = default_cross_section_points(query)
+
+    with st.container(border=True):
+        col_start_lon, col_start_lat, col_end_lon, col_end_lat = st.columns(4)
+        with col_start_lon:
+            start_lon = st.number_input(
+                "始点 経度",
+                min_value=-180.0,
+                max_value=180.0,
+                value=float(default_start_lon),
+                step=0.5,
+                key="eq_section_start_lon",
+            )
+        with col_start_lat:
+            start_lat = st.number_input(
+                "始点 緯度",
+                min_value=-90.0,
+                max_value=90.0,
+                value=float(default_start_lat),
+                step=0.5,
+                key="eq_section_start_lat",
+            )
+        with col_end_lon:
+            end_lon = st.number_input(
+                "終点 経度",
+                min_value=-180.0,
+                max_value=180.0,
+                value=float(default_end_lon),
+                step=0.5,
+                key="eq_section_end_lon",
+            )
+        with col_end_lat:
+            end_lat = st.number_input(
+                "終点 緯度",
+                min_value=-90.0,
+                max_value=90.0,
+                value=float(default_end_lat),
+                step=0.5,
+                key="eq_section_end_lat",
+            )
+
+        half_width_km = st.slider(
+            "断面半幅（km）",
+            min_value=10.0,
+            max_value=1000.0,
+            value=100.0 if query["region_preset"] == JAPAN_REGION_LABEL else 300.0,
+            step=10.0,
+            key="eq_section_half_width",
+        )
+        limit_to_segment = st.checkbox(
+            "選択した区間に限定",
+            value=True,
+            key="eq_section_limit_to_segment",
+        )
+
+    df_section, section_length_km = add_cross_section_coordinates(
+        df_plot,
+        start_lon,
+        start_lat,
+        end_lon,
+        end_lat,
+    )
+    # Build a cross-section-specific marker size that responds clearly to the
+    # sidebar scale.  We avoid Plotly Express size normalization and use a
+    # direct pixel size instead so that increasing the slider always makes the
+    # section markers larger and decreasing it always makes them smaller.
+    magnitude_section = pd.to_numeric(df_section["Magnitude"], errors="coerce").fillna(0).clip(lower=0)
+    section_scale = float(viz["marker_size_scale_section"]) ** 1.35
+    df_section["SectionMarkerSize"] = (1.4 + magnitude_section * 1.6) * section_scale
+    df_section["SectionMarkerSize"] = df_section["SectionMarkerSize"].clip(lower=0.8, upper=22.0)
+
+    if section_length_km <= 0:
+        st.warning("断面の始点と終点を異なる座標にしてください。")
+    else:
+        section_mask = df_section["SectionOffset_km"].abs() <= half_width_km
+        if limit_to_segment:
+            section_mask &= df_section["SectionDistance_km"].between(0, section_length_km)
+        df_section = df_section[section_mask].copy()
+
+        st.write(f"断面ウィンドウ内イベント数: {len(df_section)} 件")
+        if df_section.empty:
+            st.warning("この断面ウィンドウ内に地震イベントがありません。")
+        else:
+            fig_section = px.scatter(
+                df_section,
+                x="SectionDistance_km",
+                y="Depth_km",
+                color=viz["color_column"],
+                color_continuous_scale=earthquake_color_scale(viz["color_column"]),
+                range_color=color_range,
+                hover_data={
+                    "DateTime_UTC": True,
+                    "Place": True,
+                    "Magnitude": True,
+                    "Depth_km": True,
+                    "Longitude_degE": True,
+                    "Latitude_degN": True,
+                    "SectionOffset_km": ":.1f",
+                    "MarkerSize": False,
+                    "SectionMarkerSize": False,
+                },
+                height=480,
+            )
+            fig_section.update_traces(
+                marker=dict(
+                    size=df_section["SectionMarkerSize"].tolist(),
+                    opacity=0.78,
+                    line=dict(color="rgba(255,255,255,0.0)", width=0.0),
+                )
+            )
+            fig_section.update_layout(
+                xaxis_title="断面に沿った距離（km）",
+                yaxis_title="震源深さ（km）",
+                yaxis=dict(range=[viz["fig_depth_max"], viz["fig_depth_min"]]),
+                margin=dict(l=10, r=10, t=20, b=20),
+                coloraxis_colorbar=dict(title=viz["color_label"]),
+            )
+            st.plotly_chart(
+                fig_section,
+                key="earthquake_cross_section",
+                use_container_width=True,
+            )
+        render_cross_section_location_map(
+            df_plot,
+            df_section,
+            query,
+            viz,
+            start_lon,
+            start_lat,
+            end_lon,
+            end_lat,
+            half_width_km,
+            color_range,
+            plate_boundary_df,
+        )
+
+    st.subheader("深度プロファイル")
+    bin_size_km = st.slider(
+        "深さビン幅（km）",
+        min_value=5.0,
+        max_value=100.0,
+        value=25.0,
+        step=5.0,
+        key="eq_depth_profile_bin",
+    )
+    df_depth_profile = depth_profile_dataframe(df_plot, bin_size_km)
+    if df_depth_profile.empty:
+        st.warning("深度プロファイルに使用できる深さデータがありません。")
+        return
+
+    fig_depth = go.Figure(
+        go.Bar(
+            x=df_depth_profile["Count"],
+            y=df_depth_profile["DepthMid_km"],
+            orientation="h",
+            marker=dict(
+                color=df_depth_profile["MeanMagnitude"],
+                colorscale=earthquake_color_scale("Magnitude"),
+                colorbar=dict(title="平均M"),
+                line=dict(color="white", width=0.5),
+            ),
+            customdata=df_depth_profile[["MeanMagnitude", "MaxMagnitude"]],
+            hovertemplate=(
+                "深さ: %{y:.1f} km<br>"
+                "件数: %{x}<br>"
+                "平均M: %{customdata[0]:.2f}<br>"
+                "最大M: %{customdata[1]:.2f}<extra></extra>"
+            ),
+        )
+    )
+    fig_depth.update_layout(
+        height=430,
+        xaxis_title="地震数",
+        yaxis_title="震源深さ（km）",
+        yaxis=dict(range=[viz["fig_depth_max"], viz["fig_depth_min"]]),
+        margin=dict(l=10, r=10, t=20, b=20),
+    )
+    st.plotly_chart(fig_depth, key="earthquake_depth_profile", use_container_width=True)
+    render_colorbar_scale_adjustment(viz, "section")
+
+
+def normalize_column_name(name):
+    """
+    Normalize a dataframe column name for flexible user-upload matching.
+    """
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
+def find_catalog_column(df_catalog, candidates):
+    """
+    Find the first column matching common JMA/NIED/USGS names.
+    """
+    normalized_lookup = {normalize_column_name(col): col for col in df_catalog.columns}
+    for candidate in candidates:
+        normalized_candidate = normalize_column_name(candidate)
+        if normalized_candidate in normalized_lookup:
+            return normalized_lookup[normalized_candidate]
+
+    for candidate in candidates:
+        normalized_candidate = normalize_column_name(candidate)
+        for normalized_col, original_col in normalized_lookup.items():
+            if normalized_candidate and normalized_candidate in normalized_col:
+                return original_col
+
+    return None
+
+
+def read_uploaded_catalog(uploaded_file):
+    """
+    Read a user-supplied JMA/NIED catalog table.
+    """
+    if uploaded_file is None:
+        return pd.DataFrame()
+
+    file_name = uploaded_file.name.lower()
+    try:
+        if file_name.endswith((".xlsx", ".xls")):
+            return pd.read_excel(uploaded_file)
+        return pd.read_csv(uploaded_file, sep=None, engine="python")
+    except Exception:
+        uploaded_file.seek(0)
+        try:
+            return pd.read_csv(uploaded_file, sep=r"\s+", engine="python")
+        except Exception as e:
+            st.error(f"アップロードファイルを読み込めませんでした: {e}")
+            return pd.DataFrame()
+
+
+def normalize_external_catalog(df_catalog, catalog_name):
+    """
+    Normalize common JMA/NIED exported columns into the USGS-like schema.
+    """
+    if df_catalog.empty:
+        return pd.DataFrame()
+
+    lon_col = find_catalog_column(df_catalog, ["Longitude_degE", "Longitude", "Long", "Lon", "経度"])
+    lat_col = find_catalog_column(df_catalog, ["Latitude_degN", "Latitude", "Lat", "緯度"])
+    depth_col = find_catalog_column(df_catalog, ["Depth_km", "Depth", "Dep", "震源深さ", "深さ"])
+    mag_col = find_catalog_column(df_catalog, ["Magnitude", "Mag", "M", "Mj", "マグニチュード"])
+    place_col = find_catalog_column(df_catalog, ["Place", "Region", "Name", "震央地名", "震源地域"])
+    time_col = find_catalog_column(
+        df_catalog,
+        ["DateTime_UTC", "Origin Time", "OriginTime", "Time_UTC", "Datetime", "DateTime", "Date"],
+    )
+
+    missing = [
+        label
+        for label, column in [
+            ("経度", lon_col),
+            ("緯度", lat_col),
+            ("深さ", depth_col),
+            ("マグニチュード", mag_col),
+        ]
+        if column is None
+    ]
+    if missing:
+        st.warning(f"アップロードデータに必須列が不足しています: {', '.join(missing)}")
+        return pd.DataFrame()
+
+    df_norm = pd.DataFrame()
+    df_norm["Longitude_degE"] = pd.to_numeric(df_catalog[lon_col], errors="coerce")
+    df_norm["Latitude_degN"] = pd.to_numeric(df_catalog[lat_col], errors="coerce")
+    df_norm["Depth_km"] = pd.to_numeric(df_catalog[depth_col], errors="coerce")
+    df_norm["Magnitude"] = pd.to_numeric(df_catalog[mag_col], errors="coerce")
+    if time_col:
+        df_norm["Time_UTC"] = pd.to_datetime(df_catalog[time_col], errors="coerce", utc=True)
+    else:
+        df_norm["Time_UTC"] = pd.to_datetime(
+            pd.Series([pd.NaT] * len(df_norm), index=df_norm.index),
+            errors="coerce",
+            utc=True,
+        )
+
+    df_norm["DateTime_UTC"] = df_norm["Time_UTC"].dt.strftime("%Y-%m-%d %H:%M:%S UTC")
+    df_norm["Place"] = df_catalog[place_col].astype(str) if place_col else catalog_name
+    df_norm["Catalog"] = catalog_name
+    df_norm["MagnitudeMarkerSize"] = 2.0 + df_norm["Magnitude"].fillna(0).clip(lower=0) * 3.0
+    return df_norm.dropna(subset=["Longitude_degE", "Latitude_degN", "Depth_km"])
+
+
+def catalog_summary_dataframe(df_usgs, df_external):
+    """
+    Summarize the USGS and uploaded comparison catalogs.
+    """
+    catalogs = []
+    for catalog_name, df_catalog in [
+        ("USGS", df_usgs),
+        (df_external["Catalog"].iloc[0] if not df_external.empty else "JMA/NIED upload", df_external),
+    ]:
+        if df_catalog.empty:
+            catalogs.append(
+                {
+                    "カタログ": catalog_name,
+                    "イベント数": 0,
+                    "最大マグニチュード": None,
+                    "中央値深さ（km）": None,
+                    "開始時刻": None,
+                    "終了時刻": None,
+                }
+            )
+            continue
+        time_values = pd.to_datetime(df_catalog.get("Time_UTC"), errors="coerce", utc=True)
+        catalogs.append(
+            {
+                "カタログ": catalog_name,
+                "イベント数": len(df_catalog),
+                "最大マグニチュード": pd.to_numeric(df_catalog["Magnitude"], errors="coerce").max(),
+                "中央値深さ（km）": pd.to_numeric(df_catalog["Depth_km"], errors="coerce").median(),
+                "開始時刻": time_values.min(),
+                "終了時刻": time_values.max(),
+            }
+        )
+    return pd.DataFrame(catalogs)
+
+
+def render_jma_nied_comparison_page(df_plot, query, plate_boundary_df=None):
+    """
+    Provide a Japan-focused comparison panel for JMA/NIED catalogs.
+    """
+    st.subheader("JMA / NIED 比較")
+    if query["region_preset"] != JAPAN_REGION_LABEL:
+        st.info("JMA/NIED比較は日本周辺の解析で特に有効です。")
+
+    st.caption(
+        "このページでは JMA/NIED カタログを自動取得しません。"
+        "CSV/XLSX をアップロードして、同一条件の USGS データと比較してください。"
+    )
+    with st.expander("JMA/NIED データ利用メモ", expanded=False):
+        st.write(
+            "JMA は公式地震情報・地震月報を提供し、NIED Hi-net は自動処理震源などを提供しています。"
+            "研究利用時は各提供機関の利用規約・謝辞要件に従ってください。"
+        )
+        st.markdown(f"- [気象庁 震源情報]({JMA_EARTHQUAKE_INFO_URL})")
+        st.markdown(f"- [気象庁 地震月報]({JMA_BULLETIN_URL})")
+        st.markdown(f"- [NIED Hi-net データ案内]({NIED_HINET_DATA_URL})")
+
+    catalog_name = st.selectbox(
+        "アップロードデータ名",
+        ["JMA", "NIED Hi-net", "JMA統一カタログ", "その他（日本のカタログ）"],
+        key="eq_external_catalog_label",
+    )
+    uploaded_file = st.file_uploader(
+        "JMA/NIED カタログ表をアップロード",
+        type=["csv", "tsv", "txt", "xlsx", "xls"],
+        key="eq_jma_nied_upload",
+    )
+    df_external_raw = read_uploaded_catalog(uploaded_file)
+    df_external = normalize_external_catalog(df_external_raw, catalog_name)
+
+    if df_external.empty:
+        st.info("比較を有効にするには、経度・緯度・深さ・マグニチュード列を含むデータをアップロードしてください。")
+        return
+
+    df_usgs = df_plot.copy()
+    df_usgs["Catalog"] = "USGS"
+    summary = catalog_summary_dataframe(df_usgs, df_external)
+    st.dataframe(summary)
+
+    df_compare = pd.concat(
+        [
+            df_usgs[
+                [
+                    "Longitude_degE",
+                    "Latitude_degN",
+                    "Depth_km",
+                    "Magnitude",
+                    "DateTime_UTC",
+                    "Place",
+                    "Catalog",
+                    "MagnitudeMarkerSize",
+                ]
+            ],
+            df_external[
+                [
+                    "Longitude_degE",
+                    "Latitude_degN",
+                    "Depth_km",
+                    "Magnitude",
+                    "DateTime_UTC",
+                    "Place",
+                    "Catalog",
+                    "MagnitudeMarkerSize",
+                ]
+            ],
+        ],
+        ignore_index=True,
+    )
+    lon_center_hint = None
+    if query["lon_min"] < -180.0 or query["lon_max"] > 180.0:
+        lon_center_hint = (query["lon_min"] + query["lon_max"]) / 2
+    line_central_meridian = lon_center_hint
+    center_lat, center_lon, auto_zoom = auto_map_view(df_compare, lon_center_hint=lon_center_hint)
+
+    fig_compare = px.scatter_mapbox(
+        df_compare,
+        lat="Latitude_degN",
+        lon="Longitude_degE",
+        color="Catalog",
+        size="MagnitudeMarkerSize",
+        size_max=18,
+        hover_data={
+            "DateTime_UTC": True,
+            "Place": True,
+            "Magnitude": True,
+            "Depth_km": True,
+            "MagnitudeMarkerSize": False,
+        },
+        opacity=0.68,
+        height=520,
+    )
+    fig_compare = envgeo_utils.apply_map_style(fig_compare, "Standard")
+    fig_compare.update_layout(
+        mapbox=dict(center=dict(lat=center_lat, lon=center_lon), zoom=auto_zoom),
+        margin=dict(l=0, r=0, t=0, b=0),
+        legend=dict(
+            x=0.01,
+            y=0.99,
+            xanchor="left",
+            yanchor="top",
+            orientation="v",
+            bgcolor="rgba(255,255,255,0.58)",
+            bordercolor="rgba(80,80,80,0.35)",
+            borderwidth=1,
+            font=dict(size=11),
+            tracegroupgap=2,
+        ),
+    )
+    fig_compare = add_plate_boundaries_to_2d(
+        fig_compare,
+        plate_boundary_df,
+        central_meridian=line_central_meridian,
+    )
+    st.plotly_chart(
+        fig_compare,
+        key="earthquake_jma_nied_compare_map",
+        config={"scrollZoom": True, "displayModeBar": True},
+        use_container_width=True,
+    )
+
+    fig_depth_compare = px.histogram(
+        df_compare,
+        y="Depth_km",
+        color="Catalog",
+        barmode="overlay",
+        nbins=40,
+        opacity=0.65,
+        height=420,
+    )
+    fig_depth_compare.update_layout(
+        xaxis_title="地震数",
+        yaxis_title="震源深さ（km）",
+        yaxis=dict(autorange="reversed"),
+        margin=dict(l=10, r=10, t=20, b=20),
+        legend=dict(
+            x=0.99,
+            y=0.01,
+            xanchor="right",
+            yanchor="bottom",
+            orientation="v",
+            bgcolor="rgba(255,255,255,0.58)",
+            bordercolor="rgba(80,80,80,0.35)",
+            borderwidth=1,
+            font=dict(size=11),
+        ),
+    )
+    st.plotly_chart(
+        fig_depth_compare,
+        key="earthquake_jma_nied_depth_compare",
+        use_container_width=True,
+    )
+
+
+def display_earthquake_table(df_eq):
+    """
+    Display the USGS dataframe and offer a CSV download.
+    """
+    with st.expander("取得地震データ（CSV）", expanded=False):
+        table_cols = [
+            "EventID",
+            "DateTime_UTC",
+            "Magnitude",
+            "MagnitudeType",
+            "Depth_km",
+            "Longitude_degE",
+            "Latitude_degN",
+            "Place",
+            "URL",
+        ]
+        df_table = df_eq[[col for col in table_cols if col in df_eq.columns]].copy()
+        df_table = df_table.astype(str).replace(["<NA>", "nan", "NaT", "None"], "")
+        st.dataframe(df_table)
+        st.download_button(
+            "CSVダウンロード",
+            data=df_table.to_csv(index=False).encode("utf-8"),
+            file_name="usgs_earthquake_catalog.csv",
+            mime="text/csv",
+        )
+
+
+def main():
+    st.header(f"EnvGeo-Earthquake")
+    st.header(f"4D地震ビジュアライザー Advanced（{version}）")
+    st.caption("データソース: USGS Earthquake Catalog（速報値を含み、後日更新される場合があります）。")
+
+
+    with st.expander("データ利用上の注意", expanded=False):
+        st.write(
+            "本ページは研究・教育・可視化を目的としたものです。"
+            "防災判断や緊急対応には、必ず気象庁などの公式情報を確認してください。"
+        )
+        st.write(
+            "USGS カタログは公開後に改訂される場合があります。"
+            "再解析によって震源要素が更新されることがあります。"
+        )
+        st.write("データ取得元: USGS Earthquake Catalog API（GeoJSON, eventtype=earthquake）")
+        st.write(
+            "本アプリは EnvGeo-Seawater の可視化ワークフローを地震データへ展開した、"
+            "研究教育向けの簡易可視化ページです。"
+        )
+        st.write(
+            "推奨引用: U.S. Geological Survey (2017), "
+            "Advanced National Seismic System (ANSS) Comprehensive Catalog, "
+            "U.S. Geological Survey, https://doi.org/10.5066/F7MS3QZH"
+        )
+        st.write(
+            "USGS 由来情報は原則パブリックドメインですが、クレジット表記が推奨されています。"
+            "また、複数機関由来データを含む場合は各提供元の利用条件に従ってください。"
+        )
+        st.markdown(f"- [USGS FDSN Event Web Service]({USGS_EVENT_API_URL})")
+        st.markdown(f"- [ANSS / USGS FDSN データセンター情報]({USGS_COMCAT_FDSN_URL})")
+        st.markdown(f"- [USGS Copyrights and Credits]({USGS_CREDIT_URL})")
+        st.caption(
+            "3D 表示で重ねるローカル海岸線 Excel は、このリポジトリ内に出典・ライセンス情報がないため、"
+            "概略の参照表示として扱ってください。"
+        )
+        render_plate_boundary_note()
+
+    region_preset = main_region_selector()
+    query = sidebar_controls(region_preset)
+    df_eq = fetch_earthquake_dataframe(query)
+
+    query_url = df_eq.attrs.get("query_url", "")
+    st.write(f"取得イベント数: {len(df_eq)} 件")
+    if query_url:
+        st.markdown(f"[USGS APIクエリURL]({query_url})")
+    if len(df_eq) >= query["limit"]:
+        st.caption(
+            "⚠️ "
+            f"{query['limit']}件の取得上限に達しました。条件に一致する全件ではなく一部のみ表示している可能性があります。"
+            "最近の地震を見たい場合はサイドバーの「Order by」で 'time' 、巨大地震を優先して表示したい場合は、"
+            "'magnitude' を選択してください。上限値の変更は「Max events」です。"
+        )
+
+    if df_eq.empty:
+        st.warning("選択条件に一致する地震データがありません。")
+        return
+
+    df_plot = prepare_plot_dataframe(df_eq)
+    if df_plot.empty:
+        st.warning("描画可能な震源データがありません。")
+        return
+
+    viz = visualization_controls(df_plot, query)
+    plate_boundary_df = pd.DataFrame()
+    plate_source = ""
+    plate_errors = []
+    plate_boundary_note = ""
+    if viz["show_plate_boundaries"]:
+        with st.spinner("プレート境界データを読み込み中..."):
+            plate_boundary_df, plate_source, plate_errors = load_plate_boundary_dataframe(
+                query,
+                viz["include_microplates"],
+            )
+        if plate_errors and plate_boundary_df.empty:
+            st.warning("USGS からプレート境界データを取得できませんでした。")
+        elif plate_errors:
+            st.warning("USGS プレート境界サービスに接続できないため、日本周辺の簡易境界線を表示しています。")
+        if not plate_boundary_df.empty:
+            plate_boundary_note = (
+                f"プレート境界データ: {plate_source}。境界位置は概略です。教育・研究用の可視化として利用してください。"
+            )
+
+
+    st.markdown(
+        """
+        <style>
+        div[data-baseweb="tab-list"] {
+            gap: 0.22rem;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            overflow-y: hidden;
+            scrollbar-width: thin;
+        }
+        div[data-baseweb="tab-list"] button[role="tab"] {
+            background: rgba(248, 249, 250, 0.95);
+            border: 1px solid rgba(49, 51, 63, 0.22);
+            border-radius: 6px 6px 0 0;
+            padding: 0.30rem 0.54rem;
+            min-height: 2.0rem;
+            white-space: nowrap;
+            flex: 0 0 auto;
+            font-size: 0.90rem;
+            font-weight: 600;
+        }
+        div[data-baseweb="tab-list"] button[role="tab"] p {
+            margin: 0;
+        }
+        div[data-baseweb="tab-list"] button[role="tab"][aria-selected="true"] {
+            background: linear-gradient(180deg, #e8f2ff 0%, #ddeaff 100%);
+            border-color: #4a90e2;
+            color: #0b3e75;
+            box-shadow: inset 0 0 0 1px rgba(74, 144, 226, 0.35);
+        }
+        @media (max-width: 900px) {
+            div[data-baseweb="tab-list"] button[role="tab"] {
+                font-size: 0.84rem;
+                padding: 0.28rem 0.48rem;
+            }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption("タブを選択して表示を切り替えてください。")
+
+    tab_3d, tab_2d, tab_profiles, tab_time, tab_compare, tab_data = st.tabs(
+        [
+            "🧭 3D分布図",
+            "🗺️ 2D分布図",
+            "✂️ 断面図",
+            "📈 時系列頻度",
+            "🧪 比較",
+            "🗂️ データ（CSV）",
+        ]
+    )
+
+    with tab_3d:
+        st.subheader("4D震源マップ")
+        st.caption("3D操作はPC推奨です。スマホ・タブレットでは2Dタブの利用を推奨します。")
+        render_4d_hypocenter_map(df_plot, query, viz, plate_boundary_df)
+
+    with tab_2d:
+        render_2d_distribution_map(df_plot, query, viz, plate_boundary_df)
+
+    with tab_profiles:
+        render_cross_section_and_depth_profile(df_plot, query, viz, plate_boundary_df)
+
+    with tab_time:
+        render_time_histogram(df_plot)
+
+    with tab_compare:
+        render_jma_nied_comparison_page(df_plot, query, plate_boundary_df)
+
+    with tab_data:
+        display_earthquake_table(df_eq)
+
+    if st.sidebar.button("再取得 / APIキャッシュをクリア"):
+        envgeo_utils.clear_app_cache()
+        st.rerun()
+
+    st.caption("3D表示はPC推奨です。スマホ・タブレットでは2Dマップの利用を推奨します。")
+    
+    if plate_boundary_note:
+        st.caption(plate_boundary_note)
+
+if __name__ == "__main__":
+    main()
