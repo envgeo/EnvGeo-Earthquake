@@ -2211,7 +2211,7 @@ def display_earthquake_table(df_eq):
 
 def main():
     st.header(f"EnvGeo-Earthquake")
-    st.header(f"4D地震ビジュアライザー Advanced（{version}）")
+    st.header(f"4D Visualizer Earthquake 詳細版（{version}）")
     st.caption("データソース: USGS Earthquake Catalog（速報値を含み、後日更新される場合があります）。")
 
 
